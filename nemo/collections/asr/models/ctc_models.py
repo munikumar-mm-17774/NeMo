@@ -105,6 +105,12 @@ class EncDecCTCModel(ASRModel, ExportableEncDecModel, ASRModuleMixin, InterCTCMi
             dist_sync_on_step=True,
             log_prediction=self._cfg.get("log_prediction", False),
         )
+        self.global_wer = WER(
+            decoding=self.decoding,
+            use_cer=self._cfg.get('use_cer', False),
+            dist_sync_on_step=True,
+            log_prediction=self._cfg.get("log_prediction", False),
+        )
 
         # Setup optional Optimization flags
         self.setup_optimization_flags()
@@ -217,6 +223,12 @@ class EncDecCTCModel(ASRModel, ExportableEncDecModel, ASRModuleMixin, InterCTCMi
                 dist_sync_on_step=True,
                 log_prediction=self._cfg.get("log_prediction", False),
             )
+            self.global_wer = WER(
+                decoding=self.decoding,
+                use_cer=self._cfg.get('use_cer', False),
+                dist_sync_on_step=True,
+                log_prediction=self._cfg.get("log_prediction", False),
+            )
 
             # Update config
             with open_dict(self.cfg.decoder):
@@ -259,6 +271,12 @@ class EncDecCTCModel(ASRModel, ExportableEncDecModel, ASRModuleMixin, InterCTCMi
             decoding=self.decoding,
             use_cer=self.wer.use_cer,
             log_prediction=self.wer.log_prediction,
+            dist_sync_on_step=True,
+        )
+        self.global_wer = WER(
+            decoding=self.decoding,
+            use_cer=self.global_wer.use_cer,
+            log_prediction=self.global_wer.log_prediction,
             dist_sync_on_step=True,
         )
 
@@ -591,10 +609,12 @@ class EncDecCTCModel(ASRModel, ExportableEncDecModel, ASRModuleMixin, InterCTCMi
             predictions=log_probs, targets=transcript, targets_lengths=transcript_len, predictions_lengths=encoded_len,
         )
         wer, wer_num, wer_denom = self.wer.compute()
-        self.wer.reset()
+        self.global_wer.update(
+            predictions=log_probs, targets=transcript, targets_lengths=transcript_len, predictions_lengths=encoded_len,
+        )
         metrics.update({'val_loss': loss_value, 'val_wer_num': wer_num, 'val_wer_denom': wer_denom, 'val_wer': wer})
-
-        self.log('global_step', torch.tensor(self.trainer.global_step, dtype=torch.float32))
+        self.wer.reset()
+        self.log('global_step', torch.tensor(self.trainer.global_step, dtype=torch.float32),sync_dist=True)
 
         # Reset access registry
         if AccessMixin.is_access_enabled(self.model_guid):
@@ -609,7 +629,15 @@ class EncDecCTCModel(ASRModel, ExportableEncDecModel, ASRModuleMixin, InterCTCMi
         else:
             self.validation_step_outputs.append(metrics)
         return metrics
-
+    
+    def on_validation_epoch_end(self):
+        metrics = super().on_validation_epoch_end()
+        global_wer, _, _ = self.global_wer.compute()
+        self.global_wer.reset()
+        metrics.update({'val_global_wer': global_wer})
+        self.log('val_global_wer', global_wer,sync_dist=True)
+        return metrics
+    
     def multi_validation_epoch_end(self, outputs, dataloader_idx: int = 0):
         metrics = super().multi_validation_epoch_end(outputs, dataloader_idx)
         self.finalize_interctc_metrics(metrics, outputs, prefix="val_")
@@ -850,3 +878,11 @@ class EncDecCTCModel(ASRModel, ExportableEncDecModel, ASRModuleMixin, InterCTCMi
     @wer.setter
     def wer(self, wer):
         self._wer = wer
+        
+    @property
+    def global_wer(self):
+        return self._wer
+
+    @global_wer.setter
+    def global_wer(self, global_wer):
+        self._wer = global_wer   

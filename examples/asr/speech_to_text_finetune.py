@@ -198,6 +198,7 @@ def main(cfg):
         )
 
     asr_model = get_base_model(trainer, cfg)
+    asr_model.set_trainer(trainer)
 
     # Check vocabulary type and update if needed
     asr_model = check_vocabulary(asr_model, cfg)
