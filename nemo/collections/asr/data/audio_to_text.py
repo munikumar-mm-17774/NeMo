@@ -446,6 +446,7 @@ class _AudioTextDataset(Dataset):
         pad_id: int = 0,
         return_sample_id: bool = False,
         channel_selector: Optional[ChannelSelectorType] = None,
+        is_featurized: bool = False,
     ):
         if type(manifest_filepath) == str:
             manifest_filepath = manifest_filepath.split(",")
@@ -467,7 +468,7 @@ class _AudioTextDataset(Dataset):
         self.trim = trim
         self.return_sample_id = return_sample_id
         self.channel_selector = channel_selector
-
+        self.is_featiurized = is_featurized
     def get_manifest_sample(self, sample_id):
         return self.manifest_processor.collection[sample_id]
 
@@ -477,16 +478,19 @@ class _AudioTextDataset(Dataset):
 
         if offset is None:
             offset = 0
-
-        features = self.featurizer.process(
-            sample.audio_file,
-            offset=offset,
-            duration=sample.duration,
-            trim=self.trim,
-            orig_sr=sample.orig_sr,
-            channel_selector=self.channel_selector,
-        )
-        f, fl = features, torch.tensor(features.shape[0]).long()
+        if self.is_featurized:
+            features = torch.load(sample.audio_file)
+            f, fl = features, torch.tensor(features.shape[-1]).long()
+        else:
+            features = self.featurizer.process(
+                sample.audio_file,
+                offset=offset,
+                duration=sample.duration,
+                trim=self.trim,
+                orig_sr=sample.orig_sr,
+                channel_selector=self.channel_selector,
+            )
+            f, fl = features, torch.tensor(features.shape[0]).long()
 
         t, tl = self.manifest_processor.process_text_by_sample(sample=sample)
 
@@ -569,6 +573,7 @@ class AudioToCharDataset(_AudioTextDataset):
         parser: Union[str, Callable] = 'en',
         return_sample_id: bool = False,
         channel_selector: Optional[ChannelSelectorType] = None,
+        is_featurized:bool = False,
     ):
         self.labels = labels
 
@@ -591,6 +596,7 @@ class AudioToCharDataset(_AudioTextDataset):
             pad_id=pad_id,
             return_sample_id=return_sample_id,
             channel_selector=channel_selector,
+            is_featurized=is_featurized
         )
 
 
