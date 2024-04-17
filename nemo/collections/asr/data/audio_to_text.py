@@ -446,7 +446,7 @@ class _AudioTextDataset(Dataset):
         eos_id: Optional[int] = None,
         pad_id: int = 0,
         return_sample_id: bool = False,
-        channel_selector: Optional[ChannelSelectorType] = None
+        channel_selector: Optional[ChannelSelectorType] = None,
     ):
         if type(manifest_filepath) == str:
             manifest_filepath = manifest_filepath.split(",")
@@ -468,7 +468,7 @@ class _AudioTextDataset(Dataset):
         self.trim = trim
         self.return_sample_id = return_sample_id
         self.channel_selector = channel_selector
-        
+
     def get_manifest_sample(self, sample_id):
         return self.manifest_processor.collection[sample_id]
 
@@ -484,6 +484,7 @@ class _AudioTextDataset(Dataset):
 
         if offset is None:
             offset = 0
+
         features = self.featurizer.process(
             sample.audio_file,
             offset=offset,
@@ -596,7 +597,7 @@ class AudioToCharDataset(_AudioTextDataset):
             eos_id=eos_id,
             pad_id=pad_id,
             return_sample_id=return_sample_id,
-            channel_selector=channel_selector
+            channel_selector=channel_selector,
         )
 
 

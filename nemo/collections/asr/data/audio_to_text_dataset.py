@@ -155,7 +155,7 @@ def get_char_dataset(config: dict, augmentor: Optional['AudioAugmentor'] = None)
         trim=config.get('trim_silence', False),
         parser=config.get('parser', 'en'),
         return_sample_id=config.get('return_sample_id', False),
-        channel_selector=config.get('channel_selector', None)
+        channel_selector=config.get('channel_selector', None),
     )
     return dataset
 
