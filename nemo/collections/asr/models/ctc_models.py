@@ -631,7 +631,7 @@ class EncDecCTCModel(ASRModel, ExportableEncDecModel, ASRModuleMixin, InterCTCMi
         )
         metrics.update({'val_loss': loss_value, 'val_wer_num': wer_num, 'val_wer_denom': wer_denom, 'val_wer': wer})
         self.wer.reset()
-        self.log('global_step', torch.tensor(self.trainer.global_step, dtype=torch.float32),sync_dist=True)
+        self.log('global_step', torch.tensor(self.trainer.global_step, dtype=torch.float32))
 
         # Reset access registry
         if AccessMixin.is_access_enabled(self.model_guid):
@@ -652,7 +652,7 @@ class EncDecCTCModel(ASRModel, ExportableEncDecModel, ASRModuleMixin, InterCTCMi
         global_wer, _, _ = self.global_wer.compute()
         self.global_wer.reset()
         metrics.update({'val_global_wer': global_wer})
-        self.log('val_global_wer', global_wer,sync_dist=True)
+        self.log('val_global_wer', global_wer)
         return metrics
     
     def multi_validation_epoch_end(self, outputs, dataloader_idx: int = 0):
