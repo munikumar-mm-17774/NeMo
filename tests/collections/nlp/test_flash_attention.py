@@ -16,8 +16,8 @@ import random
 
 import pytest
 import torch
+from lightning.pytorch.trainer.trainer import Trainer
 from megatron.core import ModelParallelConfig
-from pytorch_lightning.trainer.trainer import Trainer
 
 from nemo.collections.nlp.modules.common.megatron.attention import CoreAttention
 from nemo.collections.nlp.modules.common.megatron.megatron_init import initialize_model_parallel_for_nemo
@@ -39,7 +39,6 @@ except (ImportError, ModuleNotFoundError):
     HAVE_FA = False
 
 try:
-    import pkg_resources
     import triton
 
     HAVE_TRITON = True
@@ -49,8 +48,12 @@ except (ImportError, ModuleNotFoundError):
 try:
     import pynvml
 
+    pynvml.nvmlInit()
+    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+    device_arch = pynvml.nvmlDeviceGetArchitecture(handle)
+    pynvml.nvmlShutdown()
     HAVE_PYNVML = True
-except (ImportError, ModuleNotFoundError):
+except (ImportError, ModuleNotFoundError, pynvml.nvml.NVMLError_LibraryNotFound):
     HAVE_PYNVML = False
 
 
@@ -80,7 +83,13 @@ class TestFlashAttention:
         MB_SIZE = 4
         GB_SIZE = 8
         SEED = 1234
-        trainer = Trainer(strategy=NLPDDPStrategy(), devices=GPUS, accelerator='gpu', num_nodes=1, logger=None,)
+        trainer = Trainer(
+            strategy=NLPDDPStrategy(),
+            devices=GPUS,
+            accelerator='gpu',
+            num_nodes=1,
+            logger=None,
+        )
 
         initialize_model_parallel_for_nemo(
             world_size=trainer.world_size,

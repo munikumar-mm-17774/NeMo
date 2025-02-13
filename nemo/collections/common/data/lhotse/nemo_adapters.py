@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import logging
 import random
 import re
@@ -224,6 +223,11 @@ class LazyNeMoTarredIterator:
     This can be used for other cloud storage APIs such as S3, GCS, etc.
     The same mechanism applies to ``manifest_path``.
 
+    If your data has been filtered so that the JSON manifests refer to just a subset of recordings,
+    set ``skip_missing_manifest_entries` to ``True``.
+    This will still read the tar files sequentially (very fast) and discard the audio files that
+    are not present in the corresponding manifest.
+
     The ``shard_seed`` argument is used to seed the RNG shuffling the shards.
     By default, it's ``trng`` which samples a seed number from OS-provided TRNG (see Python ``secrets`` module).
     Seed is resolved lazily so that every dataloading worker may sample a different one.
@@ -265,8 +269,10 @@ class LazyNeMoTarredIterator:
         shard_seed: int | Literal["trng", "randomized"] = "trng",
         text_field: str = "text",
         lang_field: str = "lang",
+        skip_missing_manifest_entries: bool = False,
         extra_fields: list[dict[str, str]] | None = None,
     ) -> None:
+        self.skip_missing_manifest_entries = skip_missing_manifest_entries
         self.shard_id_to_manifest: dict[int, Iterable[dict]]
         self.paths = expand_sharded_filepaths(manifest_path)
         if len(self.paths) == 1:
@@ -345,6 +351,22 @@ class LazyNeMoTarredIterator:
     def shard_ids(self) -> List[int]:
         return sorted(self.shard_id_to_manifest.keys())
 
+    def _iter_sequential(self, tar_path, shard_manifest, manifest_path) -> Generator[tuple[dict, bytes], None, None]:
+        with tarfile.open(fileobj=open_best(tar_path, mode="rb"), mode="r|*") as tar:
+            for tar_info in tar:
+                try:
+                    data = shard_manifest[tar_info.name]
+                    raw_audio = tar.extractfile(tar_info).read()
+                    yield data, raw_audio, tar_info
+                except KeyError as e:
+                    if self.skip_missing_manifest_entries:
+                        continue
+                    else:
+                        raise RuntimeError(
+                            f"Mismatched entry between JSON manifest ('{manifest_path}') and tar file ('{tar_path}'). "
+                            f"Cannot locate JSON entry for tar file '{tar_info.name}'"
+                        ) from e
+
     def __iter__(self) -> Generator[Cut, None, None]:
         shard_ids = self.shard_ids
 
@@ -371,17 +393,8 @@ class LazyNeMoTarredIterator:
 
             shard_manifest: dict[str, list[dict]] = groupby(basename, self.shard_id_to_manifest[sid])
             tar_path = self.shard_id_to_tar_path[sid]
-            with tarfile.open(fileobj=open_best(tar_path, mode="rb"), mode="r|*") as tar:
-                for tar_info in tar:
-                    assert tar_info.name in shard_manifest, (
-                        f"Mismatched entry between JSON manifest ('{manifest_path}') and tar file ('{tar_path}'). "
-                        f"Cannot locate JSON entry for tar file '{tar_info.name}'"
-                    )
-                    raw_audio = tar.extractfile(tar_info).read()
-                    # Note: Lhotse has a Recording.from_bytes() utility that we won't use here because
-                    #       the profiling indicated significant overhead in torchaudio ffmpeg integration
-                    #       that parses full audio instead of just reading the header for WAV files.
-                    # recording = lhotse.Recording.from_bytes(raw_audio, recording_id=tar_info.path)
+            try:
+                for data, raw_audio, tar_info in self._iter_sequential(tar_path, shard_manifest, manifest_path):
                     meta = soundfile.info(BytesIO(raw_audio))
                     recording = Recording(
                         id=tar_info.path,
@@ -415,6 +428,8 @@ class LazyNeMoTarredIterator:
                     del recording  # free the memory - helps with very large audio files
                     del raw_audio
                     yield from cuts_for_recording
+            except tarfile.ReadError:
+                logging.warning(f"Skipping tar file due to read errors (unstable storage or bad file?): {tar_path=}")
 
     def __len__(self) -> int:
         return len(self.source)

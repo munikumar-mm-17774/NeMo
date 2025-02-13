@@ -17,12 +17,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Callable, Optional
 
 import torch
+from megatron.core import parallel_state
+from megatron.core.transformer.enums import AttnBackend
 from torch import nn
 
 from nemo.collections.llm.fn.activation import openai_gelu
 from nemo.collections.llm.gpt.model.base import GPTConfig, GPTModel
 from nemo.collections.llm.utils import Config
 from nemo.lightning import OptimizerModule, io, teardown
+from nemo.lightning.pytorch.utils import dtype_from_hf
 
 if TYPE_CHECKING:
     from transformers import GemmaForCausalLM
@@ -51,6 +54,8 @@ class GemmaConfig(GPTConfig):
     # Legacy NeMo does not set layernorm_zero_centered_gamma and instead adds 1 in the HF -> NeMo conversion script
     # The present implementation is more in line with the official implementation
     layernorm_zero_centered_gamma: bool = True
+    # Disable cuDNN attention since TE 1.8 does not support head dim > 128
+    attention_backend: AttnBackend = AttnBackend.flash
 
 
 @dataclass
@@ -94,7 +99,8 @@ class GemmaModel(GPTModel):
         from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import EmbeddingScalingMixin
 
         super().configure_model()
-        extend_instance(self.module.embedding, EmbeddingScalingMixin)
+        if parallel_state.is_pipeline_first_stage():
+            extend_instance(self.module.embedding, EmbeddingScalingMixin)
 
 
 @io.model_importer(GemmaModel, "hf")
@@ -105,7 +111,7 @@ class HFGemmaImporter(io.ModelConnector["GemmaForCausalLM", GemmaModel]):
     def apply(self, output_path: Path) -> Path:
         from transformers import GemmaForCausalLM
 
-        source = GemmaForCausalLM.from_pretrained(str(self))
+        source = GemmaForCausalLM.from_pretrained(str(self), torch_dtype='auto')
         target = self.init()
         trainer = self.nemo_setup(target)
         self.convert_state(source, target)
@@ -159,7 +165,10 @@ class HFGemmaImporter(io.ModelConnector["GemmaForCausalLM", GemmaModel]):
             rotary_base=source.rope_theta,
             gated_linear_unit=True,
             make_vocab_size_divisible_by=make_vocab_size_divisible_by(source.vocab_size),
-            share_embeddings_and_output_weights=False,
+            share_embeddings_and_output_weights=True,
+            fp16=(dtype_from_hf(source) == torch.float16),
+            bf16=(dtype_from_hf(source) == torch.bfloat16),
+            params_dtype=dtype_from_hf(source),
         )
 
         return output
@@ -169,8 +178,10 @@ class HFGemmaImporter(io.ModelConnector["GemmaForCausalLM", GemmaModel]):
 class HFGemmaExporter(io.ModelConnector[GemmaModel, "GemmaForCausalLM"]):
     def init(self) -> "GemmaForCausalLM":
         from transformers import AutoModelForCausalLM
+        from transformers.modeling_utils import no_init_weights
 
-        return AutoModelForCausalLM.from_config(self.config)
+        with no_init_weights(True):
+            return AutoModelForCausalLM.from_config(self.config)
 
     def apply(self, output_path: Path) -> Path:
         target = self.init()
@@ -233,8 +244,7 @@ def _import_qkv(ctx: io.TransformCTX, q, k, v):
     num_query_groups = megatron_config.num_query_groups
     heads_per_group = head_num // num_query_groups
     hidden_size = megatron_config.hidden_size
-    head_num = megatron_config.num_attention_heads
-    head_size = hidden_size // head_num
+    head_size = megatron_config.kv_channels
 
     old_tensor_shape = q.size()
     new_q_tensor_shape = (head_num, head_size) + old_tensor_shape[1:]
@@ -275,8 +285,7 @@ def _export_qkv(ctx: io.TransformCTX, linear_qkv):
     num_query_groups = megatron_config.num_query_groups
     heads_per_group = head_num // num_query_groups
     hidden_size = megatron_config.hidden_size
-    head_num = megatron_config.num_attention_heads
-    head_size = hidden_size // head_num
+    head_size = megatron_config.kv_channels
     qkv_total_dim = head_num + 2 * num_query_groups
 
     linear_qkv = linear_qkv.reshape([qkv_total_dim, head_size, hidden_size])
@@ -301,7 +310,7 @@ def _export_qkv(ctx: io.TransformCTX, linear_qkv):
     target_key="decoder.layers.*.mlp.linear_fc1.weight",
 )
 def _import_linear_fc1(down, gate):
-    return torch.cat((down, gate), axis=0).float()
+    return torch.cat((down, gate), axis=0)
 
 
 @io.state_transform(
