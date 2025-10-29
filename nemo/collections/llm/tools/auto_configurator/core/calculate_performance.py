@@ -1,4 +1,4 @@
-# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@ from tensorboard.backend.event_processing import event_accumulator
 
 GPT_BASED_MODELS = [
     "gpt3",
-    "bert",
     "llama",
     "qwen",
     "mixtral",

@@ -1,4 +1,4 @@
-# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 Example:
   # mock dataset:
   torchrun --nproc_per_node=8 scripts/vlm/qwen2vl_finetune.py \
-  --devices=8 --tp=4 --data_type=mock
+  --devices=8 --tp_size=2 --data_type=mock
 
   # real dataset:
    torchrun --nproc_per_node=8 /path/to/NeMo/scripts/vlm/qwen2vl_finetune.py  \
@@ -39,12 +39,13 @@ import argparse
 import torch
 from lightning.pytorch.loggers import WandbLogger
 from megatron.core.optimizer import OptimizerConfig
-from transformers import Qwen2Tokenizer
 from transformers.models.qwen2_vl.image_processing_qwen2_vl import Qwen2VLImageProcessor
 
 from nemo import lightning as nl
 from nemo.collections import llm, vlm
+from nemo.collections.common.tokenizers import AutoTokenizer
 from nemo.collections.vlm import Qwen2VLDataConfig
+from nemo.collections.vlm.qwen2vl.data.task_encoder import Qwen2VLTaskEncoder
 from nemo.lightning.pytorch.optim import CosineAnnealingScheduler
 from nemo.lightning.pytorch.optim.megatron import MegatronOptimizerModule
 from nemo.utils.exp_manager import TimingCallback
@@ -69,7 +70,8 @@ def main(args):
     )
 
     max_sequence_length = args.max_sequence_length
-    tokenizer = Qwen2Tokenizer.from_pretrained(hf_model_name)
+    tokenizer = AutoTokenizer(hf_model_name)
+    image_processor = Qwen2VLImageProcessor()
     if args.data_type == "qwen2vl":
         # Data configuration
         data_config = Qwen2VLDataConfig(
@@ -78,10 +80,10 @@ def main(args):
             conv_template="qwen2vl",
             image_process_mode="square",
         )
-        image_processor = Qwen2VLImageProcessor()
         # Data module setup
         data = vlm.Qwen2VLPreloadedDataModule(
             paths=args.data_path,
+            model_version="qwen2-vl",
             data_config=data_config,
             seq_length=max_sequence_length,
             decoder_seq_length=None,
@@ -91,8 +93,27 @@ def main(args):
             image_processor=image_processor,
             num_workers=1,
         )
+    elif args.data_type == "energon":
+        from nemo.collections.multimodal.data.energon import EnergonMultiModalDataModule
+
+        # Initialize the data module
+        use_packed_sequence = False
+        data = EnergonMultiModalDataModule(
+            path=args.data_path,
+            tokenizer=tokenizer,
+            image_processor=image_processor,
+            seq_length=max_sequence_length,
+            micro_batch_size=mbs,
+            global_batch_size=gbs,
+            num_workers=1,
+            task_encoder=Qwen2VLTaskEncoder(
+                tokenizer=tokenizer,
+                image_processor=image_processor,
+                max_padding_length=int(max_sequence_length * 0.9),
+            ),
+            packing_buffer_size=200 if use_packed_sequence else None,
+        )
     elif args.data_type == "mock":
-        image_processor = Qwen2VLImageProcessor()
         data = vlm.Qwen2VLMockDataModule(
             seq_length=max_sequence_length,
             global_batch_size=gbs,
@@ -128,7 +149,7 @@ def main(args):
         freeze_vision_model=True,
     )
 
-    model = vlm.Qwen2VLModel(qwen2vl_config, tokenizer=data.tokenizer)
+    model = vlm.Qwen2VLModel(qwen2vl_config, model_version="qwen2-vl", tokenizer=data.tokenizer)
 
     from megatron.core.distributed import DistributedDataParallelConfig
 
@@ -146,12 +167,14 @@ def main(args):
             overlap_param_gather=True,
             average_in_collective=True,
         ),
+        ckpt_load_strictness="log_all",
     )
 
     # Checkpoint callback setup
     checkpoint_callback = nl.ModelCheckpoint(
         save_last=True,
         monitor="reduced_train_loss",
+        save_optim_on_train_end=False,
         save_top_k=2,
         every_n_train_steps=1000,
         dirpath=args.log_dir,
@@ -232,7 +255,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="QWEN2VL Model Training Script")
 
     # Argument parsing
-    parser.add_argument("--data_type", type=str, required=False, default="mock", help="mock | qwen2vl")
+    parser.add_argument("--data_type", type=str, required=False, default="mock", help="mock | qwen2vl | energon")
     parser.add_argument("--data_path", type=str, required=False, default=None, help="Path to the dataset JSON file")
     parser.add_argument("--image_folder", type=str, required=False, default=None, help="Path to the image folder")
     parser.add_argument(

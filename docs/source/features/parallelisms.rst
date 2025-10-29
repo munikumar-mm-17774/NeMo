@@ -172,7 +172,7 @@ Implement Tensor Parallelism
 
 NeMo Framework integrates TP through the implementation from Megatron Core. To understand how TP is activated within transformer blocks, refer to the code in the following repository: `Megatron-LM Transformer Block <https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/transformer/transformer_block.py>`__.
 
-For detailed API usage and additional configurations, consult the `Megatron Core Developer Guide <https://docs.nvidia.com/Megatron-Core/developer-guide/latest/api-guide/tensor_parallel.html>`_.
+For detailed API usage and additional configurations, consult the `Megatron Core Developer Guide <https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/tensor_parallel.html>`_.
 
 ..
     FSDP is not supported in NeMo 2.0 yet.
@@ -252,7 +252,7 @@ Implement Pipeline Parallelism
 
 The NeMo Framework implementation of PP leverages functionalities from Megatron Core. For a practical example of how PP is implemented within transformer blocks in NeMo, you can inspect the following codebase: `Megatron-LM Transformer Block <https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/transformer/transformer_block.py>`_.
 
-For more detailed API usage and configurations related to PP, visit the `Megatron Core Developer Guide <https://docs.nvidia.com/Megatron-Core/developer-guide/latest/api-guide/tensor_parallel.html>`_.
+For more detailed API usage and configurations related to PP, visit the `Megatron Core Developer Guide <https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/tensor_parallel.html>`_.
 
 Expert Parallelism
 ^^^^^^^^^^^^^^^^^^
@@ -288,8 +288,6 @@ Set expert parallelism directly from CLI:
       
       nemo llm pretrain --factory mixtral_8x7b trainer.strategy.expert_model_parallel_size=4
 
-For further information on configuration, refer to the following documentation: `NeMo Megatron GPT Config <https://github.com/NVIDIA/NeMo/blob/main/examples/nlp/language_modeling/conf/megatron_gpt_config.yaml#L68>`__.
-
 
 Enable Expert Tensor Parallelism
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -316,7 +314,7 @@ Set expert tensor parallelism directly from CLI:
 Expert Parallelism Implementation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The NeMo Framework implementation of EP uses functionality from Megatron Core. Please consult the `Megatron Core MoE layer <https://github.com/NVIDIA/Megatron-LM/blob/e2ec14ab5690fead7e33760b0f8fb20c83b4fd1f/megatron/core/transformer/moe/moe_layer.py#L29>`_ for more MoE implementation details.
+The NeMo Framework implementation of EP uses functionality from Megatron Core. Please consult the `Megatron Core MoE layer <https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/transformer/moe/moe_layer.py#L42>`_ for more MoE implementation details.
 
 
 
@@ -394,7 +392,7 @@ Set ``context_parallel_size`` directly from CLI:
       
       nemo llm pretrain --factory llama3_8b model.config.context_parallel_size=2
 
-The configuration can be found and modified here: `NeMo Megatron Core Context Config <https://docs.nvidia.com/Megatron-Core/developer-guide/latest/api-guide/context_parallel.html>`_.
+The configuration can be found and modified here: `NeMo Megatron Core Context Config <https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/context_parallel.html>`_.
 
 Implement Context Parallelism
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -403,7 +401,7 @@ NeMo Framework leverages functionalities from both Megatron Core and Transformer
 
 Visit our source code for more insights into the implementation:
 - `Megatron Core wrappers for Transformer Engine <https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/extensions/transformer_engine.py>`_
-- `Transformer Engine attention modules <https://github.com/NVIDIA/TransformerEngine/blob/main/transformer_engine/pytorch/attention.py>`_
+- `Transformer Engine attention modules <https://github.com/NVIDIA/TransformerEngine/blob/main/transformer_engine/pytorch/attention>`_
 
 
 Parallelism Nomenclature

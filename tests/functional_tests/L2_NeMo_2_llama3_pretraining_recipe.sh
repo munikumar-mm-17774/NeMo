@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-coverage run --branch -a --data-file=/workspace/.coverage --source=/workspace/nemo tests/collections/llm/llama3_pretraining.py \
+coverage run -a --data-file=/workspace/.coverage --source=/workspace/nemo tests/collections/llm/llama3_pretraining.py \
     --seq-length 1024 \
     --devices=2 \
     --max-steps=6 \
@@ -19,9 +19,10 @@ coverage run --branch -a --data-file=/workspace/.coverage --source=/workspace/ne
     --experiment-dir=/tmp/llm_tests/llama_pretrain_results \
     --data-path=/home/TestData/nlp/megatron_llama/data/rp2_sample_sentencepiece_preproc_text_document \
     --tokenizer-path=/home/TestData/nlp/megatron_llama/tokenizer.model \
-    --index-mapping-dir=/tmp/llm_tests/llama_index_mappings
+    --index-mapping-dir=/tmp/llm_tests/llama_index_mappings \
+    --ckpt-optim-fully-reshardable  # we change TP and CP in the subsequent call
 
-coverage run --branch -a --data-file=/workspace/.coverage --source=/workspace/nemo tests/collections/llm/llama3_pretraining.py \
+coverage run -a --data-file=/workspace/.coverage --source=/workspace/nemo tests/collections/llm/llama3_pretraining.py \
     --seq-length 1024 \
     --devices=2 \
     --max-steps=6 \

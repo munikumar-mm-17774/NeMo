@@ -13,21 +13,42 @@
 
 <!-- markdownlint-disable -->
 <details open>
+  <summary><b>Pivot notice: This repo will pivot to focus on speech models only</b></summary>
+      NeMo 2.0, with its support for LLMs and VLMs will be deprecated by 25.11, and replaced by <a href=https://github.com/NVIDIA-NeMo/Megatron-Bridge>NeMo Megatron-Bridge<a> and <a href=https://github.com/NVIDIA-NeMo/Automodel>NeMo Automodel<a>. More details can be find in the <a href=https://github.com/NVIDIA-NeMo>NeMo github org readme<a>. (2025-10-10)
+</details>
+
+<details closed>
   <summary><b>Pretrain and finetune :hugs:Hugging Face models via AutoModel</b></summary>
-      Nemo Framework's latest feature AutoModel enables broad support for :hugs:Hugging Face models, with 25.02 focusing on <a href=https://huggingface.co/transformers/v3.5.1/model_doc/auto.html#automodelforcausallm>AutoModelForCausalLM<a> in the <a href=https://huggingface.co/models?pipeline_tag=text-generation&sort=trending>text generation category<a>. Future releases will enable support for more model families such as Vision Language Model.
+      Nemo Framework's latest feature AutoModel enables broad support for :hugs:Hugging Face models, with 25.04 focusing on
+
+  
+- <a href=https://huggingface.co/transformers/v3.5.1/model_doc/auto.html#automodelforcausallm>AutoModelForCausalLM<a> in the <a href="https://huggingface.co/models?pipeline_tag=text-generation&sort=trending">Text Generation<a> category
+- <a href=https://huggingface.co/docs/transformers/main/model_doc/auto#transformers.AutoModelForImageTextToText>AutoModelForImageTextToText<a> in the <a href="https://huggingface.co/models?pipeline_tag=image-text-to-text&sort=trending">Image-Text-to-Text<a> category
+
+More Details in Blog: <a href=https://developer.nvidia.com/blog/run-hugging-face-models-instantly-with-day-0-support-from-nvidia-nemo-framework>Run Hugging Face Models Instantly with Day-0 Support from NVIDIA NeMo Framework<a>. Future releases will enable support for more model families such as Video Generation models.(2025-05-19)
 </details>
 
-<details open>
+<details closed>
   <summary><b>Training on Blackwell using Nemo</b></summary>
-      NeMo Framework has added Blackwell support, with 25.02 focusing on functional parity for B200. More optimizations to come in the upcoming releases.
+      NeMo Framework has added Blackwell support, with <a href=https://docs.nvidia.com/nemo-framework/user-guide/latest/performance/performance_summary.html>performance benchmarks on GB200 & B200<a>. More optimizations to come in the upcoming releases.(2025-05-19)
+</details>
+
+<details closed>
+  <summary><b>Training Performance on GPU Tuning Guide</b></summary>
+      NeMo Framework has published <a href=https://docs.nvidia.com/nemo-framework/user-guide/latest/performance/performance-guide.html>a comprehensive guide for performance tuning to achieve optimal throughput<a>! (2025-05-19)
+</details>
+
+<details closed>
+  <summary><b>New Models Support</b></summary>
+      NeMo Framework has added support for latest community models - <a href=https://docs.nvidia.com/nemo-framework/user-guide/latest/vlms/llama4.html>Llama 4<a>, <a href=https://docs.nvidia.com/nemo-framework/user-guide/latest/vision/diffusionmodels/flux.html>Flux<a>, <a href=https://docs.nvidia.com/nemo-framework/user-guide/latest/llms/llama_nemotron.html>Llama Nemotron<a>, <a href=https://docs.nvidia.com/nemo-framework/user-guide/latest/llms/hyena.html#>Hyena & Evo2<a>, <a href=https://docs.nvidia.com/nemo-framework/user-guide/latest/vlms/qwen2vl.html>Qwen2-VL<a>, <a href=https://docs.nvidia.com/nemo-framework/user-guide/latest/llms/qwen2.html>Qwen2.5<a>, Gemma3, Qwen3-30B&32B.(2025-05-19)
 </details>
 
 
-<details open>
+<details closed>
   <summary><b>NeMo Framework 2.0</b></summary>
       We've released NeMo 2.0, an update on the NeMo Framework which prioritizes modularity and ease-of-use. Please refer to the <a href=https://docs.nvidia.com/nemo-framework/user-guide/latest/nemo-2.0/index.html>NeMo Framework User Guide</a> to get started.
 </details>
-<details open>
+<details closed>
   <summary><b>New Cosmos World Foundation Models Support</b></summary>
     <details> 
       <summary> <a href="https://developer.nvidia.com/blog/advancing-physical-ai-with-nvidia-cosmos-world-foundation-model-platform">Advancing Physical AI with NVIDIA Cosmos World Foundation Model Platform </a> (2025-01-09) 
@@ -47,7 +68,7 @@
       <br><br>
     </details>
 </details>
-<details open>
+<details closed>
   <summary><b>Large Language Models and Multimodal Models</b></summary>
     <details>
       <summary>
@@ -119,7 +140,7 @@
         <br><br>
       </details>
 </details>
-<details open>
+<details closed>
   <summary><b>Speech Recognition</b></summary>
   <details>
       <summary>
@@ -386,12 +407,12 @@ nemo_toolkit using the instructions listed above. Then, you run the
 following domain-specific commands:
 
 ```bash
-pip install nemo_toolkit['all'] # or pip install "git+https://github.com/NVIDIA/NeMo@${REF:-'main'}#egg=nemo_toolkit[all]"
-pip install nemo_toolkit['asr'] # or pip install "git+https://github.com/NVIDIA/NeMo@$REF#egg=nemo_toolkit[asr]"
-pip install nemo_toolkit['nlp'] # or pip install "git+https://github.com/NVIDIA/NeMo@${REF:-'main'}#egg=nemo_toolkit[nlp]"
-pip install nemo_toolkit['tts'] # or pip install "git+https://github.com/NVIDIA/NeMo@${REF:-'main'}#egg=nemo_toolkit[tts]"
-pip install nemo_toolkit['vision'] # or pip install "git+https://github.com/NVIDIA/NeMo@${REF:-'main'}#egg=nemo_toolkit[vision]"
-pip install nemo_toolkit['multimodal'] # or pip install "git+https://github.com/NVIDIA/NeMo@${REF:-'main'}#egg=nemo_toolkit[multimodal]"
+pip install nemo_toolkit['all'] # or pip install "nemo_toolkit['all']@git+https://github.com/NVIDIA/NeMo@${REF:-'main'}"
+pip install nemo_toolkit['asr'] # or pip install "nemo_toolkit['asr']@git+https://github.com/NVIDIA/NeMo@$REF:-'main'}"
+pip install nemo_toolkit['nlp'] # or pip install "nemo_toolkit['nlp']@git+https://github.com/NVIDIA/NeMo@${REF:-'main'}"
+pip install nemo_toolkit['tts'] # or pip install "nemo_toolkit['tts']@git+https://github.com/NVIDIA/NeMo@${REF:-'main'}"
+pip install nemo_toolkit['vision'] # or pip install "nemo_toolkit['vision']@git+https://github.com/NVIDIA/NeMo@${REF:-'main'}"
+pip install nemo_toolkit['multimodal'] # or pip install "nemo_toolkit['multimodal']@git+https://github.com/NVIDIA/NeMo@${REF:-'main'}"
 ```
 
 ### NGC PyTorch container
@@ -423,7 +444,8 @@ cd /opt
 git clone https://github.com/NVIDIA/NeMo
 cd NeMo
 git checkout ${REF:-'main'}
-bash reinstall.sh --library all
+bash docker/common/install_dep.sh --library all
+pip install ".[all]"
 ```
 
 ## NGC NeMo container
@@ -524,9 +546,4 @@ branch](https://github.com/NVIDIA/NeMo/tree/gh-pages-src#readme).
 
 ## Licenses
 
-- [NeMo GitHub Apache 2.0
-  license](https://github.com/NVIDIA/NeMo?tab=Apache-2.0-1-ov-file#readme)
-- NeMo is licensed under the [NVIDIA AI PRODUCT
-  AGREEMENT](https://www.nvidia.com/en-us/data-center/products/nvidia-ai-enterprise/eula/).
-  By pulling and using the container, you accept the terms and
-  conditions of this license.
+NeMo is licensed under the [Apache License 2.0](https://github.com/NVIDIA/NeMo?tab=Apache-2.0-1-ov-file).

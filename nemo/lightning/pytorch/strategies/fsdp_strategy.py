@@ -1,4 +1,4 @@
-# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,7 +29,17 @@ from lightning.fabric.utilities.seed import reset_seed
 from lightning.pytorch.strategies.fsdp import FSDPStrategy as PLFSDPStrategy
 from lightning.pytorch.trainer.states import TrainerFn
 from lightning.pytorch.utilities.types import STEP_OUTPUT
-from megatron.core.transformer.transformer_layer import TransformerLayer
+
+try:
+    from megatron.core.transformer.transformer_layer import TransformerLayer
+
+    HAVE_MEGATRON_CORE = True
+
+except (ImportError, ModuleNotFoundError):
+
+    TransformerLayer = object
+    HAVE_MEGATRON_CORE = False
+
 from torch.distributed.checkpoint.state_dict import (  # get_state_dict,
     StateDictOptions,
     get_optimizer_state_dict,

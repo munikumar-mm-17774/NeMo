@@ -1,2 +1,0 @@
-# Installs EleutherAI's lm-evaluation-harness https://github.com/EleutherAI/lm-evaluation-harness/tree/main
-lm-eval

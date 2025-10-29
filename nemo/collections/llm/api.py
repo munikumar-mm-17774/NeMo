@@ -1,4 +1,4 @@
-# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,14 +27,14 @@ from typing_extensions import Annotated
 
 import nemo.lightning as nl
 from nemo.collections.llm import GPTModel, HFAutoModelForCausalLM
-from nemo.collections.llm.evaluation.api import EvaluationConfig, EvaluationTarget
+from nemo.collections.llm.gpt.data.fine_tuning import FineTuningDataModule
 from nemo.collections.llm.modelopt import (
     DistillationGPTModel,
     ExportConfig,
     PruningConfig,
     QuantizationConfig,
     Quantizer,
-    prune_gpt_model,
+    prune_language_model,
     save_pruned_model,
     set_modelopt_spec_if_exists_in_ckpt,
     setup_trainer_and_restore_model_with_modelopt_spec,
@@ -48,6 +48,7 @@ from nemo.lightning import (
     io,
 )
 from nemo.lightning.base import NEMO_MODELS_CACHE
+from nemo.lightning.callback_group import CallbackGroup
 from nemo.lightning.ckpt_utils import ckpt_to_context_subdir
 from nemo.lightning.pytorch.callbacks import PEFT, JitTransform, ModelTransform
 from nemo.utils import logging
@@ -64,7 +65,7 @@ AnyPath = Union[Path, str]
 
 @run.cli.entrypoint(namespace="llm")
 def train(
-    model: pl.LightningModule,
+    model: Union[pl.LightningModule, AnyPath],
     data: pl.LightningDataModule,
     trainer: Trainer,
     log: Annotated[Optional[NeMoLogger], run.Config[NeMoLogger]] = None,
@@ -78,7 +79,7 @@ def train(
     Trains a model using the specified data and trainer, with optional tokenizer, source, and export.
 
     Args:
-        model (pl.LightningModule): The model to be trained.
+        model (Union[pl.LightningModule, AnyPath]): The model to be trained or a path to the NeMo 2 checkpoint.
         data (pl.LightningDataModule): The data module containing training data.
         trainer (Trainer): The trainer instance configured with a MegatronStrategy.
         log (NeMoLogger): A nemologger instance.
@@ -105,6 +106,8 @@ def train(
         >>> llm.train(model, data, trainer, tokenizer="data")
         PosixPath('/path/to/log_dir')
     """
+    model = _load_model_from_path(model)
+
     # [ModelOpt]: If modelopt_state exists, overwrite transformer_layer_spec to modelopt spec
     if resume:
         if resume.restore_config and resume.restore_config.path:
@@ -130,7 +133,7 @@ def train(
 
 @run.cli.entrypoint(namespace="llm")
 def pretrain(
-    model: pl.LightningModule,
+    model: Union[pl.LightningModule, AnyPath],
     data: pl.LightningDataModule,
     trainer: Trainer,
     log: Annotated[Optional[NeMoLogger], run.Config[NeMoLogger]] = None,
@@ -144,7 +147,7 @@ def pretrain(
     Note, by default it will use the tokenizer from the model.
 
     Args:
-        model (pl.LightningModule): The model to be pretrained.
+        model (Union[pl.LightningModule, AnyPath]): The model to be pretrained or a path to the NeMo 2 checkpoint.
         data (pl.LightningDataModule): The data module containing pretraining data.
         trainer (Trainer): The trainer instance configured with a MegatronStrategy.
         log (NeMoLogger): A nemologger instance.
@@ -165,6 +168,7 @@ def pretrain(
         >>> llm.pretrain(model, data, trainer)
         PosixPath('/path/to/log_dir')
     """
+    model = _load_model_from_path(model)
     _validate_config(model, data, trainer, log=log, resume=resume, optim=optim)
 
     return train(
@@ -180,13 +184,14 @@ def pretrain(
 
 @run.cli.entrypoint(namespace="llm")
 def finetune(
-    model: pl.LightningModule,
+    model: Union[pl.LightningModule, AnyPath],
     data: pl.LightningDataModule,
     trainer: Trainer,
     log: Annotated[Optional[NeMoLogger], run.Config[NeMoLogger]] = None,
     resume: Annotated[Optional[AutoResume], run.Config[AutoResume]] = None,
     optim: Optional[OptimizerModule] = None,
     peft: Optional[Union[PEFT, ModelTransform, Callable]] = None,
+    tokenizer: Optional[TokenizerType] = "model",
 ) -> Path:
     """
     Finetunes a model using the specified data and trainer, with optional logging, resuming, and PEFT.
@@ -194,7 +199,7 @@ def finetune(
     Note, by default it will use the tokenizer from the model.
 
     Args:
-        model (pl.LightningModule): The model to be finetuned.
+        model (Union[pl.LightningModule, AnyPath]): The model to be finetuned.
         data (pl.LightningDataModule): The data module containing finetuning data.
         trainer (Trainer): The trainer instance configured with a MegatronStrategy.
         log (NeMoLogger): A nemologger instance.
@@ -202,6 +207,10 @@ def finetune(
         optim (Optional[OptimizerModule]): The optimizer module to be used. If not provided, the default
             optimizer from the model will be used.
         peft (Optional[PEFT]): A PEFT (Parameter-Efficient Fine-Tuning) configuration to be applied.
+        tokenizer (Optional[TokenizerType]): Tokenizer setting to be applied. Can be 'data' or 'model'
+            or an instance of TokenizerSpec. If 'data' uses the data loader's tokenizer instead of the tokenizer
+            from the model checkpoint, which is useful for expanding vocabulary or adding special tokens
+            (such as chat template tokens).
 
     Returns:
         Path: The directory path where finetuning artifacts are saved.
@@ -216,7 +225,7 @@ def finetune(
         >>> llm.finetune(model, data, trainer, peft=llm.peft.LoRA()])
         PosixPath('/path/to/log_dir')
     """
-
+    model = _load_model_from_path(model)
     _validate_config(model, data, trainer, log=log, resume=resume, optim=optim, model_transform=peft)
     return train(
         model=model,
@@ -225,7 +234,7 @@ def finetune(
         log=log,
         resume=resume,
         optim=optim,
-        tokenizer="model",
+        tokenizer=tokenizer,
         model_transform=peft,
     )
 
@@ -294,6 +303,8 @@ def prune(
     num_nodes: int = 1,
     tp_size: int = 1,
     pp_size: int = 1,
+    num_layers_in_first_pipeline_stage: int | None = None,
+    num_layers_in_last_pipeline_stage: int | None = None,
     num_train_samples: int = 1024,
     data: pl.LightningDataModule | None = None,
     tokenizer_path: str | None = None,
@@ -311,6 +322,8 @@ def prune(
         tp_size (int): The tensor parallel size.
         pp_size (int): The pipeline parallel size.
         num_train_samples (int): Number of training samples for importance estimation using forward pass.
+        num_layers_in_first_pipeline_stage (int): The number of layers in the first pipeline stage.
+        num_layers_in_last_pipeline_stage (int): The number of layers in the last pipeline stage.
         data (pl.LightningDataModule): The data module for forward pass.
             Required if not dropping layers.
         tokenizer_path (str): Path to the tokenizer if not using model's tokenizer.
@@ -346,6 +359,8 @@ def prune(
         model_path=nemo_checkpoint,
         tensor_model_parallel_size=tp_size,
         pipeline_model_parallel_size=pp_size,
+        num_layers_in_first_pipeline_stage=num_layers_in_first_pipeline_stage,
+        num_layers_in_last_pipeline_stage=num_layers_in_last_pipeline_stage,
         devices=devices,
         num_nodes=num_nodes,
         inference_only=True,
@@ -355,7 +370,7 @@ def prune(
         trainer_kwargs={"max_steps": steps, "limit_val_batches": steps, "val_check_interval": steps},
         model_config_overrides={"sequence_parallel": False},
     )
-    prune_gpt_model(model, pruning_config, data, trainer)
+    prune_language_model(model, pruning_config, data, trainer)
     save_pruned_model(trainer, save_path)
 
     console = Console()
@@ -370,6 +385,7 @@ def distill(
     teacher_model_path: AnyPath,
     data: pl.LightningDataModule,
     trainer: Trainer,
+    distillation_config_path: Optional[AnyPath] = None,
     log: Annotated[Optional[NeMoLogger], run.Config[NeMoLogger]] = None,
     resume: Annotated[Optional[AutoResume], run.Config[AutoResume]] = None,
     optim: Optional[OptimizerModule] = None,
@@ -388,6 +404,8 @@ def distill(
         teacher_model_path (Path): Path to teacher model NeMo checkpoint to distill from.
         data (pl.LightningDataModule): The data module containing training data.
         trainer (Trainer): The trainer instance configured with a MegatronStrategy.
+        distillation_config_path (Optional[Path]): Path to distillation config YAML file.
+            If not provided, by default will perform logits-only distillation.
         log (NeMoLogger): A nemologger instance.
         resume (Optional[Union[AutoResume, Resume]]): Resume training from a checkpoint.
         optim (Optional[OptimizerModule]): The optimizer module to be used. If not provided, the default optimizer
@@ -426,8 +444,14 @@ def distill(
         _student_model.config,
         _teacher_model.config,
         teacher_ckpt_path=teacher_model_path,
+        distillation_config_path=distillation_config_path,
     )
     model.__io__ = _student_model.__io__
+
+    if resume is None:
+        resume = AutoResume()
+    if resume.restore_config is None:
+        resume.restore_config = nl.RestoreConfig(path=student_model_path)
 
     return train(
         model=model,
@@ -528,7 +552,6 @@ def ptq(
         model = HFAutoModelForCausalLM(model_name=model_path, trust_remote_code=trust_remote_code, device_map="auto")
         model.configure_model()
     else:
-        assert export_config.export_format != "hf", "Automodel PTQ does not support export format hf"
         model, trainer = setup_trainer_and_restore_model_with_modelopt_spec(
             model_path=model_path,
             tensor_model_parallel_size=calibration_tp,
@@ -554,173 +577,13 @@ def ptq(
     return export_config.path
 
 
-@run.cli.entrypoint(namespace="llm")
-def deploy(
-    nemo_checkpoint: AnyPath = None,
-    model_type: str = "llama",
-    triton_model_name: str = "triton_model",
-    triton_model_version: Optional[int] = 1,
-    triton_http_port: int = 8000,
-    triton_grpc_port: int = 8001,
-    triton_http_address: str = "0.0.0.0",
-    triton_model_repository: AnyPath = None,
-    num_gpus: int = 1,
-    tensor_parallelism_size: int = 1,
-    pipeline_parallelism_size: int = 1,
-    dtype: str = "bfloat16",
-    max_input_len: int = 256,
-    max_output_len: int = 256,
-    max_batch_size: int = 8,
-    output_context_logits: bool = True,
-    output_generation_logits: bool = True,
-):
-    """
-    Deploys nemo model on a PyTriton server by converting the nemo ckpt to trtllm.
-
-    Args:
-        nemo_checkpoint (Path): Path for nemo checkpoint.
-        model_type (str): Type of the model. Choices: gpt, llama, falcon, starcoder. Default: llama.
-        triton_model_name (str): Name for the model that gets deployed on PyTriton. Please ensure that the same model
-        name is passed to the evalute method for the model to be accessible while sending evalution requests.
-        Default: 'triton_model'.
-        triton_model_version (Optional[int]): Version for the triton model. Default: 1.
-        triton_http_port (int): HTTP port for the PyTriton server. Default: 8000.
-        triton_grpc_port (int): gRPC Port for the PyTriton server. Default: 8001.
-        triton_http_address (str): HTTP address for the PyTriton server. Default:  "0.0.0.0".
-        triton_model_repository (Path): Folder for the trt-llm conversion, trt-llm engine gets saved in this specified
-        path. If None, saves it in /tmp dir. Default: None.
-        num_gpus (int): Number of GPUs for export to trtllm and deploy. Default: 1.
-        tensor_parallelism_size (int): Tensor parallelism size. Default: 1.
-        pipeline_parallelism_size (int): Pipeline parallelism size. Default: 1.
-        dtype (str): dtype of the TensorRT-LLM model. Default: "bfloat16".
-        max_input_len (int): Max input length of the model. Default: 256.
-        max_output_len (int): Max output length of the model. Default: 256.
-        max_batch_size (int): Max batch size of the model. Default: 8.
-        Needs to be True to be able to run evaluation. Default: True.
-        openai_format_response (bool): Return the response from PyTriton server in OpenAI compatible format. Needs to
-        be True while running evaluation. Default: True.
-        output_context_logits (bool): If True builds trtllm engine with 'gather_context_logits=True'. Default: True.
-            context_logits are used to compute the logProb of the output token in multi-token prediction benchmarks.
-        output_generation_logits (bool): If True builds trtllm engine with gather_generation_logits set to True.
-        generation_logits are used to compute the logProb of the output token in case of single token prediction
-        benchmarks (like MMLU, lambada). Default: True.
-    """
-    from nemo.collections.llm.deploy.base import get_trtllm_deployable, unset_environment_variables
-    from nemo.deploy import DeployPyTriton
-
-    unset_environment_variables()
-
-    triton_deployable = get_trtllm_deployable(
-        nemo_checkpoint,
-        model_type,
-        triton_model_repository,
-        num_gpus,
-        tensor_parallelism_size,
-        pipeline_parallelism_size,
-        max_input_len,
-        max_output_len,
-        max_batch_size,
-        dtype,
-        output_context_logits,
-        output_generation_logits,
-    )
-
-    try:
-        nm = DeployPyTriton(
-            model=triton_deployable,
-            triton_model_name=triton_model_name,
-            triton_model_version=triton_model_version,
-            max_batch_size=max_batch_size,
-            http_port=triton_http_port,
-            grpc_port=triton_grpc_port,
-            address=triton_http_address,
-        )
-
-        logging.info("Triton deploy function will be called.")
-        nm.deploy()
-        nm.run()
-    except Exception as error:
-        logging.error("Error message has occurred during deploy function. Error message: " + str(error))
-        return
-
-    try:
-        logging.info("Model serving on Triton will be started.")
-        nm.serve()
-    except Exception as error:
-        logging.error("Error message has occurred during deploy function. Error message: " + str(error))
-        return
-
-    logging.info("Model serving will be stopped.")
-    nm.stop()
-
-
-def evaluate(
-    target_cfg: EvaluationTarget,
-    eval_cfg: EvaluationConfig = EvaluationConfig(type="gsm8k"),
-):
-    """
-    Evaluates nemo model deployed on PyTriton server (via trtllm) using lm-evaluation-harness
-    (https://github.com/EleutherAI/lm-evaluation-harness/tree/main).
-
-    Args:
-        target_cfg (EvaluationTarget): target of the evaluation. Providing nemo_checkpoint_path, model_id, and
-            url in EvaluationTarget.api_endpoint is required to run evaluations.
-        eval_cfg (EvaluationConfig): configuration for evaluations. Default type (task): gsm8k.
-    """
-
-    if target_cfg.api_endpoint.nemo_checkpoint_path is None:
-        raise ValueError("Please provide nemo_checkpoint_path in your target_cfg.")
-
-    try:
-        # lm-evaluation-harness import
-        from lm_eval import evaluator
-    except ImportError:
-        raise ImportError(
-            "Please ensure that lm-evaluation-harness is installed in your env as it is required " "to run evaluations"
-        )
-
-    from nemo.collections.llm.evaluation.base import NeMoFWLMEval, wait_for_server_ready
-
-    # Get tokenizer from nemo ckpt. This works only with NeMo 2.0 ckpt.
-    endpoint = target_cfg.api_endpoint
-    tokenizer = io.load_context(endpoint.nemo_checkpoint_path + "/context", subpath="model.tokenizer")
-
-    # Wait for server to be ready before starting evaluation
-    wait_for_server_ready(
-        url=endpoint.url, triton_http_port=endpoint.nemo_triton_http_port, model_name=endpoint.model_id
-    )
-    # Create an object of the NeMoFWLM which is passed as a model to evaluator.simple_evaluate
-    params = eval_cfg.params
-    model = NeMoFWLMEval(
-        model_name=endpoint.model_id,
-        api_url=endpoint.url,
-        tokenizer=tokenizer,
-        batch_size=params.batch_size,
-        max_tokens_to_generate=params.max_new_tokens,
-        temperature=params.temperature,
-        top_p=params.top_p,
-        top_k=params.top_k,
-        add_bos=params.add_bos,
-    )
-
-    eval_task = eval_cfg.type
-    results = evaluator.simple_evaluate(
-        model=model,
-        tasks=eval_task,
-        limit=params.limit_samples,
-        num_fewshot=params.num_fewshot,
-        bootstrap_iters=params.bootstrap_iters,
-    )
-
-    print("score", results["results"][eval_task])
-
-
 @run.cli.entrypoint(name="import", namespace="llm")
 def import_ckpt(
     model: pl.LightningModule,
     source: str,
     output_path: Optional[AnyPath] = None,
     overwrite: bool = False,
+    **kwargs,
 ) -> Path:
     """
     Imports a checkpoint into a model using the model's associated importer, typically for
@@ -732,13 +595,13 @@ def import_ckpt(
     CLI Usage:
     ```bash
     # Import Llama 3 8B from HuggingFace (saves to $NEMO_MODELS_CACHE)
-    nemo llm import llama3_8b source="hf://meta-llama/Llama-3.1-8B"
+    nemo llm import model=llama3_8b source="hf://meta-llama/Llama-3.1-8B"
 
     # Import with custom output path
-    nemo llm import llama3_8b source="hf://meta-llama/Llama-3.1-8B" output_path="/path/to/save"
+    nemo llm import model=llama3_8b source="hf://meta-llama/Llama-3.1-8B" output_path="/path/to/save"
 
     # Force overwrite existing checkpoint
-    nemo llm import llama3_8b source="hf://meta-llama/Llama-3.1-8B" overwrite=true
+    nemo llm import model=llama3_8b source="hf://meta-llama/Llama-3.1-8B" overwrite=true
     ```
 
     Python Usage:
@@ -784,7 +647,7 @@ def import_ckpt(
         if output_path.exists() and not overwrite:
             raise FileExistsError(f"Output path {output_path} exists. Use overwrite=True to force overwrite.")
 
-    output = io.import_ckpt(model=model, source=source, output_path=output_path, overwrite=overwrite)
+    output = io.import_ckpt(model=model, source=source, output_path=output_path, overwrite=overwrite, **kwargs)
 
     console = Console()
     if output_path:
@@ -813,6 +676,7 @@ def export_ckpt(
     output_path: Optional[AnyPath] = None,
     overwrite: bool = False,
     load_connector: Callable[[Path, str], io.ModelConnector] = load_connector_from_trainer_ckpt,
+    modelopt_export_kwargs: dict[str, Any] = None,
     **kwargs,
 ) -> Path:
     """
@@ -824,13 +688,13 @@ def export_ckpt(
     CLI Usage:
     ```bash
     # Export model to HuggingFace format (saves to {checkpoint_path}/hf/)
-    nemo llm export /path/to/model.nemo target="hf"
+    nemo llm export path=/path/to/model.nemo target="hf"
 
     # Export with custom output path
-    nemo llm export /path/to/model.nemo target="hf" output_path="/path/to/save"
+    nemo llm export path=/path/to/model.nemo target="hf" output_path="/path/to/save"
 
     # Force overwrite existing export
-    nemo llm export /path/to/model.nemo target="hf" overwrite=true
+    nemo llm export path=/path/to/model.nemo target="hf" overwrite=true
     ```
 
     Python Usage:
@@ -854,6 +718,7 @@ def export_ckpt(
             This is useful for model updates where retaining old checkpoint files is not required.
         load_connector (Callable[[Path, str], ModelConnector]): A function to load the appropriate
             exporter based on the model and target format. Defaults to `load_connector_from_trainer_ckpt`.
+        modelopt_export_kwargs (Dict[str, Any]): Additional keyword arguments for ModelOpt export to HuggingFace.
 
     Returns:
         Path: The path where the checkpoint has been saved after export.
@@ -861,13 +726,17 @@ def export_ckpt(
     Raises:
         ValueError: If the model does not implement ConnectorMixin, indicating a lack of
             necessary exporter functionality.
+        FileExistsError: If the output path is provided (that is, when not using models cache)
+            and it exists and overwrite is not set to True.
     """
     if not isinstance(path, Path):
         path = Path(path)
     if output_path and not isinstance(output_path, Path):
         output_path = Path(output_path)
+        if output_path.exists() and not overwrite:
+            raise FileExistsError(f"Output path {output_path} exists. Use overwrite=True to force overwrite.")
 
-    output = io.export_ckpt(path, target, output_path, overwrite, load_connector, **kwargs)
+    output = io.export_ckpt(path, target, output_path, overwrite, load_connector, modelopt_export_kwargs, **kwargs)
 
     console = Console()
     console.print(f"[green]✓ Checkpoint exported to {output}[/green]")
@@ -890,6 +759,8 @@ def generate(
     inference_params: Optional["CommonInferenceParams"] = None,
     text_only: bool = False,
     output_path: Optional[AnyPath] = None,
+    enable_flash_decode: bool = True,
+    **kwargs,
 ) -> list[Union["InferenceRequest", str]]:
     """
     Generates text using a NeMo LLM model.
@@ -956,6 +827,8 @@ def generate(
         text_only (bool, optional): Whether to return only the generated text as a string. Defaults to False.
         output_path (Optional[Union[Path, str]], optional): The path to save the generated text or test dataset
             predictions. Defaults to None.
+        enable_flash_decode (bool, optional): Whether to enable flash decode. Defaults to True.
+        **kwargs: Additional keyword arguments passed to setup_model_and_tokenizer.
 
     Returns:
         list[Union["InferenceRequest", str]]: A list of generated text,
@@ -978,14 +851,24 @@ def generate(
         trainer=trainer,
         params_dtype=params_dtype,
         inference_batch_times_seqlen_threshold=inference_batch_times_seqlen_threshold,
+        enable_flash_decode=enable_flash_decode,
+        **kwargs,
     )
 
-    dp_size = trainer.strategy.distributed_sampler_kwargs['num_replicas']
-    dp_rank = trainer.strategy.distributed_sampler_kwargs['rank']
-    chunk_size = (len(inputs) + dp_size - 1) // dp_size
-    start_idx = dp_rank * chunk_size
-    end_idx = min(start_idx + chunk_size, len(inputs))
-    inputs_on_this_dp_rank = inputs[start_idx:end_idx]
+    max_seq_length = inference_params.num_tokens_to_generate + max(len(mcore_tokenizer.tokenize(p)) for p in inputs)
+    # set kv cache allocation to only num tokens in prompt + max tokens to generate
+    inference_wrapped_model.inference_wrapper_config.inference_max_seq_length = max_seq_length
+    inference_wrapped_model.inference_context.max_sequence_length = max_seq_length
+
+    if trainer.strategy.expert_model_parallel_size > 1:
+        inputs_on_this_dp_rank = inputs
+    else:
+        dp_size = trainer.strategy.distributed_sampler_kwargs['num_replicas']
+        dp_rank = trainer.strategy.distributed_sampler_kwargs['rank']
+        chunk_size = (len(inputs) + dp_size - 1) // dp_size
+        start_idx = dp_rank * chunk_size
+        end_idx = min(start_idx + chunk_size, len(inputs))
+        inputs_on_this_dp_rank = inputs[start_idx:end_idx]
 
     results_on_this_dp_rank = inference.generate(
         model=inference_wrapped_model,
@@ -997,16 +880,20 @@ def generate(
         random_seed=random_seed,
         inference_params=inference_params,
     )
-    gathered_results = [None] * dp_size
 
-    all_gather_object(
-        gathered_results,
-        [r.generated_text if text_only else r for r in results_on_this_dp_rank],
-        group=parallel_state.get_data_parallel_group(),
-    )
-    gathered_results = [result for sublist in gathered_results for result in sublist]
+    if trainer.strategy.expert_model_parallel_size > 1:
+        gathered_results = [r.generated_text if text_only else r for r in results_on_this_dp_rank]
+    else:
+        gathered_results = [None] * dp_size
 
-    assert len(gathered_results) == len(inputs)
+        all_gather_object(
+            gathered_results,
+            [r.generated_text if text_only else r for r in results_on_this_dp_rank],
+            group=parallel_state.get_data_parallel_group(),
+        )
+        gathered_results = [result for sublist in gathered_results for result in sublist]
+
+        assert len(gathered_results) == len(inputs)
 
     if output_path is not None and is_global_rank_zero():
         with open(output_path, "w") as f:
@@ -1061,11 +948,19 @@ def _setup(
         resume_if_exists=getattr(resume, "resume_if_exists", False),
         task_config=getattr(train, "__io__", None),
     )
+
+    # Configure telemetry via CallbackGroup
+    CallbackGroup.get_instance().update_config(nemo_version='v2', trainer=trainer, data=data)
+
     if resume is not None:
+        CallbackGroup.get_instance().on_load_checkpoint_start()
         resume.setup(trainer, model)
+        CallbackGroup.get_instance().on_load_checkpoint_end()
 
     if optim:
+        CallbackGroup.get_instance().on_optimizer_init_start()
         optim.connect(model)
+        CallbackGroup.get_instance().on_optimizer_init_end()
     if tokenizer:  # TODO: Improve this
         _use_tokenizer(model, data, tokenizer)
 
@@ -1120,12 +1015,13 @@ def _validate_config(
 
     # Data validation
     assert data.micro_batch_size > 0
-    assert data.global_batch_size > 0
-    assert data.seq_length > 0
+    if isinstance(trainer.strategy, nl.MegatronStrategy):
+        assert data.global_batch_size > 0
+        assert data.seq_length > 0
 
-    assert (
-        data.global_batch_size % data.micro_batch_size == 0
-    ), "Global batch size must be divisible by micro batch size in data module."
+        assert (
+            data.global_batch_size % data.micro_batch_size == 0
+        ), "Global batch size must be divisible by micro batch size in data module."
 
     # Trainer validation
 
@@ -1185,6 +1081,17 @@ def _validate_config(
                     assert (
                         model.config.seq_length % (trainer.strategy.context_parallel_size * 2) == 0
                     ), 'Sequence length must be divisible by 2 * context parallel size if context parallel is used.'
+                if isinstance(data, FineTuningDataModule):
+                    # check calculate_per_token_loss to be True
+                    # check average_in_collective to be False
+                    # for context parallel to solve the issue of nan loss on ranks with all tokens masked
+                    # (only happens in SFT)
+                    assert (
+                        model.config.calculate_per_token_loss
+                    ), "When finetuning with CP>1, model.config.calculate_per_token_loss must be True"
+                    assert (
+                        not trainer.strategy.ddp_config.average_in_collective
+                    ), "When finetuning with CP>1, average_in_collective must be False"
 
         # EP validation
         if trainer.strategy.expert_model_parallel_size > 1:
@@ -1224,3 +1131,9 @@ def _build_directory_tree(path, tree=None, root_name=None):
                 tree.add(f"[white]{item.name}[/white]")
 
     return tree
+
+
+def _load_model_from_path(model: Union[pl.LightningModule, AnyPath]):
+    if isinstance(model, AnyPath):
+        model = io.load_context(ckpt_to_context_subdir(model), subpath="model")
+    return model

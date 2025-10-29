@@ -22,14 +22,22 @@ import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.utils import get_batch_on_this_cp_rank
 from torch import Tensor, nn
 
 import nemo.collections.llm.gpt.model.base as GPTBase
 from nemo.collections.llm.bert.loss import BERTInBatchExclusiveHardNegativesRankingLoss, HardNegativeRankingLoss
 from nemo.collections.llm.gpt.model import GPTConfig
-from nemo.collections.llm.gpt.model.llama import HFLlamaImporter, Llama32Config1B, LlamaConfig, LlamaModel
+from nemo.collections.llm.gpt.model.llama import (
+    HFLlamaImporter,
+    Llama31Config,
+    Llama32Config1B,
+    Llama32Config3B,
+    LlamaConfig,
+    LlamaModel,
+)
 from nemo.collections.llm.utils import Config
-from nemo.lightning import OptimizerModule, io
+from nemo.lightning import OptimizerModule, io, teardown
 from nemo.lightning.io.state import TransformFns
 from nemo.lightning.pytorch.utils import dtype_from_hf
 from nemo.utils import logging
@@ -85,7 +93,7 @@ def nv_embedding_data_step(dataloder_iter) -> Dict[str, torch.Tensor]:
 
     _batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in _batch.items()}
     # slice batch along sequence dimension for context parallelism
-    output = GPTBase.get_batch_on_this_context_parallel_rank(_batch)
+    output = get_batch_on_this_cp_rank(_batch)
 
     return output
 
@@ -123,9 +131,37 @@ class Llama32EmbeddingConfig1B(Llama32Config1B):
     add_bos: bool = True
     add_eos: bool = False
 
-    def configure_model(self, tokenizer, pre_process=None, post_process=None) -> "MCoreGPTModel":
+    def configure_model(self, tokenizer, pre_process=None, post_process=None, vp_stage=None) -> "MCoreGPTModel":
         """Configure the NV Embedding Llama3.2 1B Model"""
-        model = super().configure_model(tokenizer, pre_process, post_process)
+        model = super().configure_model(tokenizer, pre_process, post_process, vp_stage)
+        # post_process need to be overwritten to False after model init because
+        # final_layernorm is still needed and it will only be initialized when post_process is True in Mcore.
+        # And for forward(), we do not want to run through output_layer thus setting post_process to False.
+        model.post_process = False
+        return model
+
+
+@dataclass
+class Llama32EmbeddingConfig3B(Llama32Config3B):
+    """Llama3.2 Embedding 3B Config"""
+
+    transformer_layer_spec: Union[ModuleSpec, Callable[["GPTConfig"], ModuleSpec]] = get_nv_embedding_layer_spec
+    forward_step_fn: Callable = nv_embedding_forward_step
+    data_step_fn: Callable = nv_embedding_data_step
+
+    # Training Configs
+    truncation_method: Literal["left", "right"] = 'right'
+    num_hard_negatives: int = 4
+    ce_loss_scale: float = 50
+    label_smoothing: float = 0.0
+    in_batch_negatives: bool = False
+    negative_sample_strategy: Literal["random", "first"] = 'first'
+    add_bos: bool = True
+    add_eos: bool = False
+
+    def configure_model(self, tokenizer, pre_process=None, post_process=None, vp_stage=None) -> "MCoreGPTModel":
+        """Configure the NV Embedding Llama3.2 3B Model"""
+        model = super().configure_model(tokenizer, pre_process, post_process, vp_stage)
         # post_process need to be overwritten to False after model init because
         # final_layernorm is still needed and it will only be initialized when post_process is True in Mcore.
         # And for forward(), we do not want to run through output_layer thus setting post_process to False.
@@ -268,6 +304,44 @@ class LlamaEmbeddingImporter(HFLlamaImporter):
 
         return output
 
+    def apply(self, output_path: Path) -> Path:
+        """Apply the conversion from HF to NeMo format.
+        Args:
+            output_path: Path where the converted model will be saved
+        Returns:
+            Path: Path to the saved NeMo model
+        """
+        from transformers import AutoModel, AutoModelForCausalLM
+
+        try:
+            source = AutoModelForCausalLM.from_pretrained(str(self), torch_dtype='auto', trust_remote_code=True)
+        except:
+            source = AutoModel.from_pretrained(str(self), torch_dtype='auto', trust_remote_code=True)
+
+            # Wrap the source in a model for causal LM
+            class ModelWrapper(nn.Module):
+                """Wrap the source in a model so that the key mapping is consistent with LlamaModelImporter"""
+
+                def __init__(self, model, config):
+                    super().__init__()
+                    self.model = model
+                    self.config = config
+
+            source = ModelWrapper(source, source.config)
+
+        target = self.init()
+        trainer = self.nemo_setup(target)
+
+        self.convert_state(source, target)
+        self.nemo_save(output_path, trainer)
+
+        print(f"Converted LlamaEmbedding model to Nemo, model saved to {output_path}.")
+
+        teardown(trainer, target)
+        del trainer, target
+
+        return output_path
+
 
 @io.model_exporter(LlamaEmbeddingModel, "hf")
 class LlamaEmbeddingExporter(io.ModelConnector[LlamaEmbeddingModel, "LlamaBidirectionalModel"]):
@@ -281,7 +355,7 @@ class LlamaEmbeddingExporter(io.ModelConnector[LlamaEmbeddingModel, "LlamaBidire
         from nemo.collections.llm.gpt.model.hf_llama_embedding import LlamaBidirectionalModel
 
         LlamaBidirectionalModel.register_for_auto_class("AutoModel")
-        with no_init_weights(True):
+        with no_init_weights():
             return LlamaBidirectionalModel._from_config(self.config, torch_dtype=dtype)
 
     def apply(self, output_path: Path) -> Path:
@@ -312,6 +386,16 @@ class LlamaEmbeddingExporter(io.ModelConnector[LlamaEmbeddingModel, "LlamaBidire
         from nemo.collections.llm.gpt.model.hf_llama_embedding import LlamaBidirectionalConfig
 
         LlamaBidirectionalConfig.register_for_auto_class("AutoConfig")
+        rope_scaling = None
+        # For Llama 3.1 and Llama 3.2, rope_scaling is used and thus needed to parsed to the config
+        if isinstance(source, Llama31Config):
+            rope_scaling = {
+                'factor': source.scale_factor,
+                'low_freq_factor': source.low_freq_factor,
+                'high_freq_factor': source.high_freq_factor,
+                'original_max_position_embeddings': source.old_context_len,
+                'rope_type': 'llama3',
+            }
         return LlamaBidirectionalConfig(
             num_hidden_layers=source.num_layers,
             hidden_size=source.hidden_size,
@@ -324,6 +408,7 @@ class LlamaEmbeddingExporter(io.ModelConnector[LlamaEmbeddingModel, "LlamaBidire
             rope_theta=source.rotary_base,
             vocab_size=self.tokenizer.vocab_size,
             tie_word_embeddings=source.share_embeddings_and_output_weights,
+            rope_scaling=rope_scaling,
         )
 
     def convert_state(self, source, target):

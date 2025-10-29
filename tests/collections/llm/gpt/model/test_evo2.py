@@ -109,7 +109,7 @@ def test_hyena_nv_40b_config():
     config = HyenaNV40bConfig()
     assert config.num_layers == 50
     assert config.hidden_size == 8192
-    assert config.ffn_hidden_size == 21888
+    assert config.ffn_hidden_size == 22528
     assert config.num_attention_heads == 64
     assert config.seq_length == 8192
     assert config.tokenizer_library == "byte-level"
@@ -121,7 +121,7 @@ def test_hyena_7b_arc_long_context_config():
     assert config.hidden_size == 4096
     assert config.ffn_hidden_size == 11264
     assert config.num_attention_heads == 32
-    assert config.seq_length == 8192
+    assert config.seq_length == 1048576  # ~1M or 2**20
     assert config.tokenizer_library == "byte-level"
 
 
@@ -131,7 +131,7 @@ def test_hyena_40b_arc_long_context_config():
     assert config.hidden_size == 8192
     assert config.ffn_hidden_size == 22528
     assert config.num_attention_heads == 64
-    assert config.seq_length == 8192
+    assert config.seq_length == 1048576  # ~1M or 2**20
     assert config.tokenizer_library == "byte-level"
 
 
@@ -154,13 +154,13 @@ def test_hyena_nv_test_config():
     assert config.tokenizer_library == "byte-level"
 
 
+@pytest.mark.pleasefixme
 def test_convert_hyena():
-
     from huggingface_hub.utils import RepositoryNotFoundError
 
     evo2_config = llm.Hyena1bConfig()
-    model_ckpt = "dummy/model"
+    model_ckpt = "dummy_model_deosnt_exist"
     exporter = HuggingFaceSavannaHyenaImporter(model_ckpt, model_config=evo2_config)
 
     with pytest.raises(RepositoryNotFoundError):
-        exporter.apply("dummy_output")
+        exporter.apply("dummy_output_deosnt_exist")

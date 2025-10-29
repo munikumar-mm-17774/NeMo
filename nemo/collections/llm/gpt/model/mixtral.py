@@ -1,4 +1,4 @@
-# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -59,7 +59,7 @@ class MixtralConfig(GPTConfig):
     num_moe_experts: int = 8
     moe_aux_loss_coeff: float = 0.01
     moe_router_topk: int = 2
-    moe_router_pre_softmax: bool = True
+    moe_router_pre_softmax: bool = False
     moe_token_dispatcher_type: str = "alltoall"
     moe_router_load_balancing_type: str = 'aux_loss'
 
@@ -233,7 +233,7 @@ class HFMixtralImporter(io.ModelConnector["MixtralForCausalLM", MixtralModel]):
             num_query_groups=config.num_key_value_heads,
             num_moe_experts=config.num_local_experts,
             moe_router_topk=config.num_experts_per_tok,
-            moe_router_pre_softmax=True,
+            moe_router_pre_softmax=False,
             # norm
             normalization='RMSNorm',
             layernorm_epsilon=config.rms_norm_eps,
@@ -283,7 +283,7 @@ class HFMixtralExporter(io.ModelConnector[MixtralModel, "MixtralForCausalLM"]):
         from transformers import AutoModelForCausalLM
         from transformers.modeling_utils import no_init_weights
 
-        with no_init_weights(True):
+        with no_init_weights():
             return AutoModelForCausalLM.from_config(self.config)
 
     def apply(self, output_path: Path) -> Path:
@@ -365,6 +365,7 @@ class HFMixtralExporter(io.ModelConnector[MixtralModel, "MixtralForCausalLM"]):
         from transformers import MixtralConfig as HfMixtralConfig
 
         return HfMixtralConfig(
+            architectures=["MixtralForCausalLM"],
             num_hidden_layers=source.num_layers,
             hidden_size=source.hidden_size,
             intermediate_size=source.ffn_hidden_size,

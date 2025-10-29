@@ -1,4 +1,4 @@
-# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -67,6 +67,7 @@ class TestDistCkptIO:
         assert os.environ['NVTE_APPLY_QK_LAYER_SCALING'] == '1'
         gbs, mbs = 2, 2
         model, data = get_model_and_data(mbs, gbs)
+
         from tests.lightning.mcore_microbatch_utils import reconfigure_num_microbatches_calculator_manager
 
         with reconfigure_num_microbatches_calculator_manager(0, None, gbs, mbs, data_parallel_size=1):
@@ -146,15 +147,19 @@ class TestDistCkptIO:
             )
             async_test_trainer.fit(model, data)
 
-        checkpoint = {'sharded_state_dict': model.sharded_state_dict()}
+        sync_last_ckpt = f"{sync_ckpt_dir}/checkpoints/{_get_last_checkpoint_dir(model)}"
+        async_last_ckpt = f"{async_ckpt_dir}/checkpoints/{_get_last_checkpoint_dir(model)}"
+        sharded_state_dict_metadata = sync_checkpoint_io.load_content_metadata(sync_last_ckpt)
+        assert sharded_state_dict_metadata == async_checkpoint_io.checkpoint_io.load_content_metadata(async_last_ckpt)
 
-        sync_state_dict = sync_checkpoint_io.load_checkpoint(
-            Path(f"{sync_ckpt_dir}/checkpoints/{_get_last_checkpoint_dir(model)}"), sharded_state_dict=checkpoint
-        )
+        ## NOTE: model does not have `sharded_state_dict` attribute because
+        ## this is after MegatronStrategy teardown
+        ## so model class' __getattr__ gets replaced with original __getattr__
+        checkpoint = {'sharded_state_dict': model.module.sharded_state_dict(metadata=sharded_state_dict_metadata)}
 
-        async_state_dict = async_checkpoint_io.load_checkpoint(
-            Path(f"{async_ckpt_dir}/checkpoints/{_get_last_checkpoint_dir(model)}"), sharded_state_dict=checkpoint
-        )
+        sync_state_dict = sync_checkpoint_io.load_checkpoint(Path(sync_last_ckpt), sharded_state_dict=checkpoint)
+
+        async_state_dict = async_checkpoint_io.load_checkpoint(Path(async_last_ckpt), sharded_state_dict=checkpoint)
 
         ## one of the keys is a _io.BytesIO object
         for k in sync_state_dict['sharded_state_dict'].keys():

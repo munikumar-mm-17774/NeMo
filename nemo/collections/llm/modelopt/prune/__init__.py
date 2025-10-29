@@ -1,4 +1,4 @@
-# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,6 +14,6 @@
 
 """Prune utilities for using TensorRT Model Optimizer."""
 
-from .pruner import PruningConfig, prune_gpt_model, save_pruned_model
+from .pruner import PruningConfig, prune_language_model, save_pruned_model
 
-__all__ = ["PruningConfig", "prune_gpt_model", "save_pruned_model"]
+__all__ = ["PruningConfig", "prune_language_model", "save_pruned_model"]
