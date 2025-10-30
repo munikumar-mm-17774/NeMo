@@ -16,12 +16,15 @@ import json
 import math
 import multiprocessing
 import os
+import random
 from collections.abc import Iterable as IterableABC
 from typing import Callable, Dict, Iterable, List, Optional, Tuple, Union
-
 import braceexpand
 import numpy as np
 import torch
+from nemo.collections.asr.parts.preprocessing.segment import AudioSegment
+
+import webdataset as wds
 from torch.utils.data import ChainDataset
 from tqdm import tqdm
 
@@ -38,6 +41,7 @@ from nemo.utils.data_utils import DataStoreObject, datastore_object_get, is_data
 from nemo.utils.decorators import deprecated
 from nemo.utils.distributed import webdataset_split_by_workers
 from nemo.utils.get_rank import is_global_rank_zero
+from nemo.collections.asr.parts.preprocessing.audio_augmentation import AudioMix
 
 __all__ = [
     'AudioToCharDataset',
@@ -462,11 +466,13 @@ class _AudioTextDataset(Dataset):
             pad_id=pad_id,
             manifest_parse_func=manifest_parse_func,
         )
-        self.featurizer = WaveformFeaturizer(sample_rate=sample_rate, int_values=int_values, augmentor=augmentor)
+        self.sample_rate = sample_rate
+        self.featurizer = WaveformFeaturizer(sample_rate=sample_rate, int_values=int_values)
         self.trim = trim
         self.return_sample_id = return_sample_id
         self.channel_selector = channel_selector
-
+        self.augmentor=augmentor
+        
     def get_manifest_sample(self, sample_id):
         return self.manifest_processor.collection[sample_id]
 
@@ -496,17 +502,199 @@ class _AudioTextDataset(Dataset):
         t, tl = self.manifest_processor.process_text_by_sample(sample=sample)
 
         if self.return_sample_id:
-            output = f, fl, torch.tensor(t).long(), torch.tensor(tl).long(), index
+            output = f, fl, torch.tensor(t).long(), torch.tensor(tl).long(), index, sample.audio_file
         else:
-            output = f, fl, torch.tensor(t).long(), torch.tensor(tl).long()
-
+            output = f, fl, torch.tensor(t).long(), torch.tensor(tl).long(), sample.audio_file
+        
         return output
+
 
     def __len__(self):
         return len(self.manifest_processor.collection)
+    
+    def get_audio_mix_augmentor(self):
+        last_augmentation = self.augmentor.augmentations[-1][0]
 
+        if isinstance(last_augmentation, AudioMix):
+            return last_augmentation
+        
+        return None
+    
+    def other_lang_single_samples(self):
+        samples=[]
+        audio_mix_augmentor=self.get_audio_mix_augmentor()
+        if audio_mix_augmentor is None:
+            return samples
+        
+        num_langs=len(audio_mix_augmentor.lang_audio_files)
+        lang_ids=random.sample(range(num_langs),num_langs)
+        
+        
+        for i in range(audio_mix_augmentor.num_other_lang_files):
+            if len(lang_ids) == 0:
+                lang_ids=random.sample(range(num_langs),num_langs)
+            lang_id = lang_ids.pop()
+            
+            audio_files = audio_mix_augmentor.lang_audio_files[lang_id]
+            
+            if len(audio_files) == 0:
+                continue
+            audio_file = random.choice(audio_files)
+            
+            audio = AudioSegment.from_file(
+                audio_file,
+                target_sr=self.sample_rate,
+            )
+            audio=audio.samples
+            f, fl = torch.tensor(audio), torch.tensor(audio.shape[0]).long()
+
+            t, tl = torch.tensor([0]), torch.tensor(1).long()  # Dummy transcription for other language samples
+
+            if self.return_sample_id:
+                output = f, fl, torch.tensor(t).long(), torch.tensor(tl).long(), i, audio_file
+            else:
+                output = f, fl, torch.tensor(t).long(), torch.tensor(tl).long(), audio_file
+            samples.append(output)
+            
+        return samples
+    
+    def other_lang_multiple_samples(self):
+        samples=[]
+        num_other_langs=2
+        audio_mix_augmentor=self.get_audio_mix_augmentor()
+        if audio_mix_augmentor is None:
+            return samples
+        
+        num_langs=len(audio_mix_augmentor.lang_audio_files)
+        lang_ids=random.sample(range(num_langs),num_langs)
+        
+        for i in range(audio_mix_augmentor.num_other_lang_files):
+            audio_list= []
+            for _ in range(num_other_langs):
+                if len(lang_ids) == 0:
+                    lang_ids=random.sample(range(num_langs),num_langs)
+                
+                lang_id = lang_ids.pop()
+                lang_audio_files= audio_mix_augmentor.lang_audio_files[lang_id]
+                if len(lang_audio_files) == 0:
+                    continue
+                
+                audio_file = random.choice(lang_audio_files)
+                audio = AudioSegment.from_file(
+                audio_file,
+                target_sr=self.sample_rate,
+            )
+                audio=audio.samples
+                audio_list.append(torch.tensor(audio))
+            
+            audio=torch.cat(audio_list, dim=0)
+            audio=audio[:self.sample_rate*30]
+            audio_list.clear()
+
+            f, fl = audio, torch.tensor(audio.shape[0]).long()
+
+            t, tl = torch.tensor([0]), torch.tensor(1).long()  # Dummy transcription for other language samples
+
+            if self.return_sample_id:
+                output = f, fl, torch.tensor(t).long(), torch.tensor(tl).long(), i, audio_file
+            else:
+                output = f, fl, torch.tensor(t).long(), torch.tensor(tl).long(), audio_file
+                
+            samples.append(output)
+        return samples
+
+
+    def apply_audio_mix(self, batch):
+        # Check if the last augmentation is AudioMix type
+        last_augmentation = self.get_audio_mix_augmentor()
+
+        if last_augmentation is None:
+            return batch, False
+        
+        # Calculate number of samples to augment based on probability
+        num_to_augment = int(len(batch) * last_augmentation.prob)
+        
+        
+        if num_to_augment <= 0:
+            return batch, True
+        
+        # Shuffle sample IDs for random selection
+        sample_ids = list(range(len(batch)))
+        random.shuffle(sample_ids)
+        
+        # Initialize language IDs and shuffle them
+        language_ids = list(range(len(last_augmentation.lang_probs)))
+        random.shuffle(language_ids)
+        
+        num_augmented = 0
+        attempts = 0
+        
+        # Loop until we've augmented enough samples or tried all samples
+        while num_augmented < num_to_augment and attempts < len(batch):
+            # Replenish language IDs if needed
+            if len(language_ids) == 0:
+                language_ids = list(range(len(last_augmentation.lang_probs)))
+                random.shuffle(language_ids)
+
+            sample_id = sample_ids[attempts]
+
+            # Get the sample components
+            audio, audio_signal_len, transcription, transcription_len, audio_file = batch[sample_id]
+            
+            # Check if audio length is suitable for mixing
+            if audio_signal_len.item() + last_augmentation.min_audio_length < last_augmentation.max_audio_length:
+                lang_id = language_ids.pop() 
+                aug_audio, aug_audio_len = last_augmentation.transform(audio, audio_signal_len, audio_file, lang_id)
+                batch[sample_id] = (aug_audio, aug_audio_len, transcription, transcription_len, audio_file)
+                num_augmented += 1
+            attempts += 1
+            
+        
+        return batch, True
+        
     def _collate_fn(self, batch):
-        return _speech_collate_fn(batch, pad_id=self.manifest_processor.pad_id)
+        if self.augmentor is not None:
+            batch,audio_mix_augmented = self.apply_audio_mix(batch)
+            total_augmentations=len(self.augmentor.augmentations)
+            
+            # Check if the last augmentation is AudioMix type and remove it
+            if audio_mix_augmented:
+                total_augmentations -= 1
+                other_lang_single_samples = self.other_lang_single_samples()
+                other_lang_multiple_samples= self.other_lang_multiple_samples()
+                batch.extend(other_lang_single_samples)
+                batch.extend(other_lang_multiple_samples)
+            
+
+            if total_augmentations > 0:
+                total_aug_samples=int(len(batch)*self.augmentor.prob)
+                
+                if total_augmentations > total_aug_samples:
+                    total_augmentations = total_aug_samples
+                    
+                aug_sample_ids = torch.randperm(len(batch))[:total_aug_samples]
+                augments_list = list(range(total_augmentations))
+                random.shuffle(augments_list)
+                
+                for sample_id in aug_sample_ids:
+                    try:
+                        if len(augments_list) == 0:
+                            augments_list = list(range(total_augmentations))
+                            random.shuffle(augments_list)
+                        aug_idx = augments_list.pop()
+                        audio,audio_signal= batch[sample_id][0], batch[sample_id][1]
+                        aug_sample, aug_sample_len = self.augmentor(audio,audio_signal, aug_idx)
+                        new_sample = (aug_sample, aug_sample_len, batch[sample_id][2], batch[sample_id][3], batch[sample_id][4])
+                        batch[sample_id] = new_sample
+                    except Exception as e:
+                        logging.error(f"Error applying augmentation: sample= {batch[sample_id][-1]} aug_idx= {aug_idx} error= {e}")
+                        raise
+            
+        batch = [sample[:-1] if len(sample) >= 5 else sample for sample in batch]
+        
+        random.shuffle(batch)
+        speech_batch= _speech_collate_fn(batch, pad_id=self.manifest_processor.pad_id)
+        return speech_batch
 
 
 class AudioToCharDataset(_AudioTextDataset):

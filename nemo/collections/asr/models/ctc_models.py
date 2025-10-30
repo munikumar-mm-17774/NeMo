@@ -675,7 +675,7 @@ class EncDecCTCModel(ASRModel, ExportableEncDecModel, ASRModuleMixin, InterCTCMi
         )
         metrics.update({'val_loss': loss_value, 'val_wer_num': wer_num, 'val_wer_denom': wer_denom, 'val_wer': wer})
         self.wer.reset()
-        self.log('global_step', torch.tensor(self.trainer.global_step, dtype=torch.float32))
+        self.log('validation_global_step', torch.tensor(self.trainer.global_step, dtype=torch.float32))
 
         # Reset access registry
         if AccessMixin.is_access_enabled(self.model_guid):

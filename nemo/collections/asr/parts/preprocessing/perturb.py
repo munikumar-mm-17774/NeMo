@@ -338,6 +338,25 @@ class GainPerturbation(Perturbation):
         gain = random.uniform(self._min_gain_dbfs, self._max_gain_dbfs)
         data._samples = data._samples * (10.0 ** (gain / 20.0))
 
+class GaussianPitchShiftPerturbation(Perturbation):
+    def __init__(self, sr: int, sigma_p: float):
+        """
+        Gaussian Pitch Shift Augmentation.
+        
+        Args:
+            sr (int): Sampling rate of the audio.
+            sigma_p (float): Standard deviation for the Gaussian distribution.
+        """
+        self.sr = sr
+        self.sigma_p = sigma_p
+
+    def perturb(self, data):
+        # Sample the pitch shift factor from a Gaussian distribution
+        f = np.random.normal(loc=0, scale=self.sigma_p)
+        
+        # Apply pitch shift
+        data._samples = librosa.effects.pitch_shift(data._samples, sr=self.sr, n_steps=f)
+
 
 class ImpulsePerturbation(Perturbation):
     """
@@ -1131,6 +1150,7 @@ perturbation_types = {
     "rir_noise_aug": RirAndNoisePerturbation,
     "transcode_aug": TranscodePerturbation,
     "random_segment": RandomSegmentPerturbation,
+    "pitch_shift": GaussianPitchShiftPerturbation,
 }
 
 
