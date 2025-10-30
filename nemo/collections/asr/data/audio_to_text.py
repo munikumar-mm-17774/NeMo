@@ -521,6 +521,9 @@ class _AudioTextDataset(Dataset):
         return None
     
     def other_lang_single_samples(self):
+        """
+        Sample a single other language audio file
+        """
         samples=[]
         audio_mix_augmentor=self.get_audio_mix_augmentor()
         if audio_mix_augmentor is None:
