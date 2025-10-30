@@ -31,8 +31,7 @@ from nemo.collections.asr.data.huggingface.hf_audio_to_text_dataset import (
     get_hf_audio_to_text_bpe_dataset,
     get_hf_audio_to_text_char_dataset,
 )
-from nemo.collections.asr.parts.preprocessing.perturb import process_augmentations
-from nemo.collections.asr.parts.preprocessing.audio_augmentation import process_custom_augmentations
+from nemo.collections.asr.parts.preprocessing.perturb import AudioAugmentor, process_augmentations
 from nemo.collections.common.data.dataset import CodeSwitchedDataset, ConcatDataset
 from nemo.collections.common.tokenizers import TokenizerSpec
 from nemo.utils import logging
@@ -731,10 +730,7 @@ def get_audio_to_text_bpe_dataset_from_config(
         constructed dataset or None if dataset config is invalid or nothing to load
     """
     if 'augmentor' in config:
-        if "old_augmentor" in config['augmentor']:
-            augmentor = process_augmentations(config['augmentor'], global_rank=global_rank, world_size=world_size)
-        else:
-            augmentor = process_custom_augmentations(config['augmentor'], global_rank=global_rank, world_size=world_size)
+        augmentor = process_augmentations(config['augmentor'], global_rank=global_rank, world_size=world_size)
     else:
         augmentor = None
 

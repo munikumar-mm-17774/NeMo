@@ -92,12 +92,6 @@ class EncDecCTCModelBPE(EncDecCTCModel, ASRBPEMixin):
             dist_sync_on_step=True,
             log_prediction=self._cfg.get("log_prediction", False),
         )
-        self.global_wer = WER(
-            decoding=self.decoding,
-            use_cer=self.global_wer.use_cer,
-            log_prediction=self.global_wer.log_prediction,
-            dist_sync_on_step=True,
-        )
 
     def _setup_dataloader_from_config(self, config: Optional[Dict]):
         if config.get("use_lhotse"):
@@ -312,12 +306,6 @@ class EncDecCTCModelBPE(EncDecCTCModel, ASRBPEMixin):
             log_prediction=self._cfg.get("log_prediction", False),
             dist_sync_on_step=True,
         )
-        self.global_wer = WER(
-            decoding=self.decoding,
-            use_cer=self.global_wer.use_cer,
-            log_prediction=self.global_wer.log_prediction,
-            dist_sync_on_step=True,
-        )
 
         # Update config
         with open_dict(self.cfg.decoder):
@@ -356,12 +344,6 @@ class EncDecCTCModelBPE(EncDecCTCModel, ASRBPEMixin):
             decoding=self.decoding,
             use_cer=self.wer.use_cer,
             log_prediction=self.wer.log_prediction,
-            dist_sync_on_step=True,
-        )
-        self.global_wer = WER(
-            decoding=self.decoding,
-            use_cer=self.global_wer.use_cer,
-            log_prediction=self.global_wer.log_prediction,
             dist_sync_on_step=True,
         )
 

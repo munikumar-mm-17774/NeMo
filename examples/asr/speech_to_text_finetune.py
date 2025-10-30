@@ -54,13 +54,10 @@ For documentation on fine-tuning this model, please visit:
 https://docs.nvidia.com/deeplearning/nemo/user-guide/docs/en/main/asr/configs.html#fine-tuning-configurations
 """
 import time
-
 import lightning.pytorch as pl
-import torch
-from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
 
-from nemo.collections.asr.models import ASRModel, EncDecCTCModel, EncDecCTCModelBPE
+from nemo.collections.asr.models import ASRModel
 from nemo.core.config import hydra_runner
 from nemo.utils import logging, model_utils
 from nemo.utils.exp_manager import exp_manager
@@ -68,16 +65,7 @@ from nemo.utils.get_rank import is_global_rank_zero
 from nemo.utils.trainer_utils import resolve_trainer_cfg
 
 
-def asr_class_from_name(cfg_name: str, cfg):
-    if cfg_name.endswith("_ctc_bpe"):
-        return EncDecCTCModelBPE(cfg.model)
-    elif cfg_name.endswith("_ctc"):
-        return EncDecCTCModel(cfg)
-    else:
-        raise ValueError("Unknow cfg name")
-
-
-def get_base_model(trainer, cfg, cfg_name=None):
+def get_base_model(trainer, cfg):
     """
     Returns the base model to be fine-tuned.
     Currently supports two types of initializations:
@@ -98,40 +86,27 @@ def get_base_model(trainer, cfg, cfg_name=None):
         raise ValueError(
             "Both `init_from_nemo_model` and `init_from_pretrained_model cannot be None, should pass atleast one of them"
         )
-    is_ssl_model = cfg.get("is_ssl", None)
-    if is_ssl_model:
-        if cfg_name is None:
-            raise ValueError("To finetune the SSL model for ASR task, you must have to provide cfg_name")
-        if nemo_model_path is not None:
-            ssl_model = ASRModel.restore_from(restore_path=nemo_model_path)
-            ssl_state_dict = ssl_model.state_dict()
+    elif nemo_model_path is not None:
+        asr_model = ASRModel.restore_from(restore_path=nemo_model_path)
+    elif pretrained_name is not None:
+        # Due to potential first time download of the model on the cluster, we need to make sure that only one
+        # rank downloads the model and the others wait for the download to finish.
+        num_ranks = trainer.num_devices * trainer.num_devices
+
+        if num_ranks > 1 and is_global_rank_zero():
+            asr_model = ASRModel.from_pretrained(model_name=pretrained_name)
         else:
-            ssl_ckpt = torch.load(pretrained_name, weights_only=False)
-            ssl_state_dict = ssl_ckpt['state_dict']
-        asr_model = asr_class_from_name(cfg_name, cfg)
-        asr_model.load_state_dict(ssl_state_dict, strict=False)
-    else:
-        if nemo_model_path is not None:
-            asr_model = ASRModel.restore_from(restore_path=nemo_model_path)
-        elif pretrained_name is not None:
-            # Due to potential first time download of the model on the cluster, we need to make sure that only one
-            # rank downloads the model and the others wait for the download to finish.
-            num_ranks = trainer.num_devices * trainer.num_devices
+            # Sleep on all ranks for at least 60 seconds
+            wait_time = int(cfg.get('exp_manager', {}).get('seconds_to_sleep', 60))
+            if wait_time < 60:
+                wait_time = 60
 
-            if num_ranks > 1 and is_global_rank_zero():
-                asr_model = ASRModel.from_pretrained(model_name=pretrained_name)
-            else:
-                # Sleep on all ranks for at least 60 seconds
-                wait_time = int(cfg.get('exp_manager', {}).get('seconds_to_sleep', 60))
-                if wait_time < 60:
-                    wait_time = 60
+            logging.info(f"Sleeping for at least {wait_time} seconds to wait for model download to finish.")
 
-                logging.info(f"Sleeping for at least {wait_time} seconds to wait for model download to finish.")
+            time.sleep(wait_time)
 
-                time.sleep(wait_time)
-
-                # restore model from cached model dir
-                asr_model = ASRModel.from_pretrained(model_name=pretrained_name)
+            # restore model from cached model dir
+            asr_model = ASRModel.from_pretrained(model_name=pretrained_name)
 
     asr_model.set_trainer(trainer)
     return asr_model
@@ -216,14 +191,8 @@ def setup_dataloaders(asr_model, cfg):
     return asr_model
 
 
-@hydra_runner(
-    config_path="/14tdt1/muni/workspace/repo/nemo/NeMo/examples/asr/conf/fastconformer",
-    config_name="fast-conformer_ctc_bpe",
-)
+@hydra_runner(config_path="conf/asr_finetune", config_name="speech_to_text_finetune")
 def main(cfg):
-    hydra_cfg = HydraConfig.get()
-    cfg_name = hydra_cfg.job.config_name
-    logging.info(f"Hydra config name: {cfg_name}")
     logging.info(f'Hydra config: {OmegaConf.to_yaml(cfg)}')
 
     trainer = pl.Trainer(**resolve_trainer_cfg(cfg.trainer))
@@ -233,7 +202,8 @@ def main(cfg):
         raise NotImplementedError(
             "Currently for simplicity of single script for all model types, we only support `init_from_nemo_model` and `init_from_pretrained_model`"
         )
-    asr_model = get_base_model(trainer, cfg, cfg_name)
+
+    asr_model = get_base_model(trainer, cfg)
     asr_model.set_trainer(trainer)
 
     # Check vocabulary type and update if needed

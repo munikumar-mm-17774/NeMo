@@ -13,9 +13,6 @@ setuptools>=70.0.0
 tensorboard
 text-unidecode
 torch
-torchaudio
-registrable
-pyroomacoustics
 tqdm>=4.41.0
 wget
 wrapt

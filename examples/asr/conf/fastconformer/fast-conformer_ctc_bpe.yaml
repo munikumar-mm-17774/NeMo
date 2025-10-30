@@ -40,161 +40,38 @@
 # However accumulate_grad_batches is better to be avoided as long as the global batch size is large enough and training is stable.
 
 name: "FastConformer-CTC-BPE"
-init_from_pretrained_model: 'path/to/pt/model'
-is_ssl: true
+
 model:
   sample_rate: 16000
   log_prediction: true # enables logging sample predictions in the output during training
   ctc_reduction: 'mean_volume'
   skip_nan_grad: false
-  char_labels: 
-    update_labels: false
-  # labels: *labels
 
   train_ds:
     manifest_filepath: ???
     sample_rate: ${model.sample_rate}
     batch_size: 16 # you may increase batch_size if your memory allows
     shuffle: true
-    num_workers: 16
+    num_workers: 8
     pin_memory: true
-    max_duration: 30.0 # it is set for LibriSpeech, you may need to update it for your dataset
-    min_duration: 1.0
+    max_duration: 16.7 # it is set for LibriSpeech, you may need to update it for your dataset
+    min_duration: 0.1
     # tarred datasets
     is_tarred: false
     tarred_audio_filepaths: null
     shuffle_n: 2048
     # bucketing params
-    bucketing_strategy: "synced_randomized"
+    bucketing_strategy: "fully_randomized"
     bucketing_batch_size: null
-    augmentor:
-      prob: 0.5
-      pipeline:
-        - 
-          - time_stretch:
-              stretch_factor_range: [0.85, 1.15]
-              stft_win_length: 320
-              stft_hop_length: 160
-              stft_nfft: 1024
-        -
-          - speed_perturbation:
-              min_speed: 0.85
-              max_speed: 1.15
-        -
-          - drop_sample_augment:
-              frame_size: 800
-              min_drop: 8
-              max_drop: 40
-        - 
-          - gain:
-              min_db: -30
-              max_db: 0
-              min_segments: 2
-              max_segments: 4
-              sample_rate: 16000
-              fade: true
-        -
-          - low_shelf_filter:
-              sample_rate: ${model.sample_rate}
-              prob: 1.0
-              min_center_frequency: 40.0
-              max_center_frequency: 3000.0
-              min_gain_db: -18
-              max_gain_db: 18
-              min_q: 0.1
-              max_q: 0.99
-        -
-          - high_shelf_filter:
-              sample_rate: ${model.sample_rate}
-              prob: 1.0
-              min_center_frequency: 300.0
-              max_center_frequency: 4000.0
-              min_gain_db: -18
-              max_gain_db: 18
-              min_q: 0.1
-              max_q: 0.99
-        -
-          - aliasing:
-              sample_rate: ${model.sample_rate}
-              prob: 1.0
-              min_sample_rate: 6000
-              max_sample_rate: 8000
-        -
-          - add_gaussian_noise:
-              prob: 1.0
-              min_amplitude: 0.003
-              max_amplitude: 0.02
-              batch_agnostic: true
-        -
-          - reverb_echo:
-              initial: 0.2
-              prob: 1.0
-              rt60: [1.1, 1.9]
-              repeat: 3
-              jitter: 0.5
-              keep_clean: 0.1
-              sample_rate: ${model.sample_rate}
-        -
-          - noise_augment:
-              noise_dir: path/to/noise/dataset
-        -
-          - noise_augment:
-              noise_dir: path/to/music/dataset
-        - 
-          - audio_mix:
-              language_dir: path/to/other/language/audio/dir
-              segments_dir: path/to/train/audio/vad/segments/dir
-              max_audio_length: 30
-              prob: 0.2
-              num_other_audio_files: 3
-        -
-          - noise_augment:
-              noise_dir: path/to/noise/dataset
-          - reverb_echo:
-              initial: 0.2
-              prob: 1.0
-              rt60: [1.1, 1.9]
-              repeat: 3
-              jitter: 0.5
-              keep_clean: 0.1
-              sample_rate: ${model.sample_rate}
-          - gain:
-              min_db: -30
-              max_db: -5
-              min_segments: 2
-              max_segments: 4
-              sample_rate: 16000
-              fade: true
-        -
-          - speed_perturbation:
-              min_speed: 0.85
-              max_speed: 1.15
-              is_batch_agnostic: true
-          - drop_sample_augment:
-              frame_size: 800
-              min_drop: 8
-              max_drop: 40
-          - gain:
-              min_db: -30
-              max_db: -5
-              min_segments: 2
-              max_segments: 4
-              sample_rate: 16000
-              fade: true
-
 
   validation_ds:
-    manifest_filepath: ["/14td2/muni/datasets/asr/hindi/fine_tuning/nemo_5k_ds/eval/zvoice.json", "/14td2/muni/datasets/asr/hindi/fine_tuning/nemo_5k_ds/eval/ekstep.json", "/14td2/muni/datasets/asr/hindi/fine_tuning/nemo_5k_ds/eval/shrutilipi.json", "/14td2/muni/datasets/asr/hindi/fine_tuning/nemo_5k_ds/eval/mucs.json", "/14td2/muni/datasets/asr/hindi/fine_tuning/nemo_5k_ds/eval/iitm.json", "/14td2/muni/datasets/asr/hindi/fine_tuning/nemo_5k_ds/eval/kathbath.json", "/14td2/muni/datasets/asr/hindi/fine_tuning/nemo_5k_ds/eval/common_voice.json", "/14td2/muni/datasets/asr/hindi/fine_tuning/nemo_5k_ds/eval/gramvaani.json", "/14td2/muni/datasets/asr/hindi/fine_tuning/nemo_5k_ds/eval/iitm_nptel.json", "/14td2/muni/datasets/asr/hindi/fine_tuning/nemo_5k_ds/eval/indicvoices.json", "/14td2/muni/datasets/asr/hindi/fine_tuning/nemo_5k_ds/eval/fleurs.json", "/14td2/muni/datasets/asr/hindi/fine_tuning/nemo_5k_ds/eval/spring_inx.json","/14td2/muni/datasets/asr/hindi/fine_tuning/nemo_5k_ds/eval/lahaja.json",'/14td2/muni/datasets/asr/hindi/fine_tuning/nemo_5k_ds/eval/mucs_test.json']
-
-    sample_rate: 16000
-    batch_size: 64 # you may increase batch_size if your memory allows
+    manifest_filepath: ???
+    sample_rate: ${model.sample_rate}
+    batch_size: 16 # you may increase batch_size if your memory allows
     shuffle: false
-    max_duration: 30.0 # it is set for LibriSpeech, you may need to update it for your dataset
-    min_duration: 0.1
     use_start_end_token: false
-    num_workers: 16
+    num_workers: 8
     pin_memory: true
-    # labels: *labels
 
   test_ds:
     manifest_filepath: null
@@ -208,8 +85,7 @@ model:
   # recommend vocab size of 128 or 256 when training on ~1k hr datasets and 1k vocab size on 10+k hr datasets
   # you may find more detail on how to train a tokenizer at: /scripts/tokenizers/process_asr_text_tokenizer.py
   tokenizer:
-    update_tokenizer: true
-    dir: 'path/to/tokenizer/dir'  # path to directory which contains either tokenizer.model (bpe) or vocab.txt (wpe)
+    dir: ???  # path to directory which contains either tokenizer.model (bpe) or vocab.txt (wpe)
     type: bpe  # Can be either bpe (SentencePiece tokenizer) or wpe (WordPiece tokenizer)
 
   preprocessor:
@@ -313,7 +189,6 @@ model:
       warmup_steps: 15000
       warmup_ratio: null
       min_lr: 1e-4
-      max_steps: 100000
 
 trainer:
   devices: -1 # number of GPUs, -1 would use all available GPUs
@@ -327,7 +202,7 @@ trainer:
     gradient_as_bucket_view: true
   accumulate_grad_batches: 1
   gradient_clip_val: 0.0
-  precision: bf16 # 16, 32, or bf16
+  precision: 32 # 16, 32, or bf16
   log_every_n_steps: 10  # Interval of logging.
   enable_progress_bar: True
   num_sanity_val_steps: 0 # number of steps to perform validation steps for sanity check the validation process before starting the training, setting to 0 disables it
@@ -338,23 +213,24 @@ trainer:
   benchmark: false # needs to be false for models with variable-length speech input as it slows down training
 
 exp_manager:
-  exp_dir: output_dir
+  exp_dir: null
   name: ${name}
   create_tensorboard_logger: true
   create_checkpoint_callback: true
   checkpoint_callback_params:
-    # In case of multiple validation sets, first one is used
-    monitor: "val_global_wer"
+    # in case of multiple validation sets, first one is used
+    monitor: "val_wer"
     mode: "min"
-    save_top_k: 10
-    always_save_nemo: True # Saves the checkpoints as nemo files instead of PTL checkpoints
-  create_neptune_logger: False
-  neptune_logger_kwargs:
-      project: project
-      name: experiment_name
-      prefix: train
-      log_model_checkpoints: false # Set to True if checkpoints need to be pushed to Neptune
-      tags: tag # San specify as an array of strings in yaml array format
-  # You need to set these two to True to continue the training
-  resume_if_exists: True
-  resume_ignore_no_checkpoint: True
+    save_top_k: 5
+    always_save_nemo: True # saves the checkpoints as nemo files instead of PTL checkpoints
+
+  resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
+  # you need to set these two to True to continue the training
+  resume_if_exists: false
+  resume_ignore_no_checkpoint: false
+
+  # You may use this section to create a W&B logger
+  create_wandb_logger: false
+  wandb_logger_kwargs:
+    name: null
+    project: null
